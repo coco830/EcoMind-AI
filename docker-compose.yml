@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  tdengine:
+    image: tdengine/tdengine:2.6.0.34
+    container_name: ecomind-tdengine
+    hostname: tdengine
+    ports:
+      - "6030:6030"
+      - "6035:6035"
+      - "6041:6041"
+    volumes:
+      - tdengine_data:/var/lib/taos
+      - tdengine_log:/var/log/taos
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "taos", "-s", "select server_version();"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: ecomind-postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=ecomind
+      - POSTGRES_USER=ecomind
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-ecomind123}
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ecomind-backend
+    ports:
+      - "8000:8000"
+      - "9880:9880"
+    volumes:
+      - ./backend:/app
+    environment:
+      - TDENGINE_HOST=tdengine
+      - TDENGINE_PORT=6030
+      - TDENGINE_USER=root
+      - TDENGINE_PASSWORD=taosdata
+      - TDENGINE_DATABASE=ecomind
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=ecomind
+      - POSTGRES_USER=ecomind
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-ecomind123}
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+      - TCP_GATEWAY_PORT=9880
+    depends_on:
+      tdengine:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ecomind-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  tdengine_data:
+  tdengine_log:
+  postgres_data:

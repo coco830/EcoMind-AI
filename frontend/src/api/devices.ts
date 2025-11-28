@@ -1,0 +1,107 @@
+import { request } from './request'
+
+export interface PollutantThreshold {
+  pollutant_code: string
+  pollutant_name: string
+  warning_value: number
+  alarm_value: number
+  unit: string
+}
+
+export interface ThresholdConfig {
+  enabled: boolean
+  pollutants: PollutantThreshold[]
+}
+
+export interface Device {
+  id: string
+  mn: string
+  name: string
+  device_type: 'water' | 'air' | 'noise' | 'soil'
+  status: 'online' | 'offline' | 'alarm' | 'maintenance'
+  org_id: string
+  latitude: number | null
+  longitude: number | null
+  address: string | null
+  pollutant_codes: string[] | null
+  thresholds: ThresholdConfig | null
+  last_heartbeat: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DeviceCreate {
+  mn: string
+  name: string
+  device_type: 'water' | 'air' | 'noise' | 'soil'
+  org_id?: string  // 可选，不传则使用当前用户的组织
+  latitude?: number
+  longitude?: number
+  address?: string
+  pollutant_codes?: string[]
+  thresholds?: ThresholdConfig
+}
+
+// Predefined pollutant options for different device types
+export const POLLUTANT_OPTIONS = {
+  water: [
+    { code: 'w01018', name: 'COD', unit: 'mg/L', defaultWarning: 35, defaultAlarm: 40 },
+    { code: 'w21003', name: '氨氮', unit: 'mg/L', defaultWarning: 12, defaultAlarm: 15 },
+    { code: 'w01001', name: 'pH值', unit: '', defaultWarning: 8.5, defaultAlarm: 9.0 },
+    { code: 'w01010', name: '总磷', unit: 'mg/L', defaultWarning: 0.8, defaultAlarm: 1.0 },
+    { code: 'w21011', name: '总氮', unit: 'mg/L', defaultWarning: 12, defaultAlarm: 15 },
+  ],
+  air: [
+    { code: 'a34004', name: 'PM2.5', unit: 'ug/m³', defaultWarning: 55, defaultAlarm: 75 },
+    { code: 'a34002', name: 'PM10', unit: 'ug/m³', defaultWarning: 120, defaultAlarm: 150 },
+    { code: 'a21004', name: 'NO2', unit: 'ug/m³', defaultWarning: 160, defaultAlarm: 200 },
+    { code: 'a21026', name: 'SO2', unit: 'ug/m³', defaultWarning: 400, defaultAlarm: 500 },
+    { code: 'a05024', name: 'O3', unit: 'ug/m³', defaultWarning: 160, defaultAlarm: 200 },
+  ],
+  noise: [
+    { code: 'e01001', name: '噪声', unit: 'dB(A)', defaultWarning: 55, defaultAlarm: 65 },
+  ],
+  soil: [
+    { code: 's01001', name: 'pH值', unit: '', defaultWarning: 8.5, defaultAlarm: 9.5 },
+    { code: 's01002', name: '重金属含量', unit: 'mg/kg', defaultWarning: 100, defaultAlarm: 150 },
+  ],
+}
+
+export interface DeviceStats {
+  total: number
+  online: number
+  offline: number
+  alarm: number
+  maintenance: number
+}
+
+export const deviceApi = {
+  list(params?: {
+    org_id?: string
+    status?: string
+    skip?: number
+    limit?: number
+  }): Promise<Device[]> {
+    return request.get('/devices', { params })
+  },
+
+  get(id: string): Promise<Device> {
+    return request.get(`/devices/${id}`)
+  },
+
+  create(data: DeviceCreate): Promise<Device> {
+    return request.post('/devices', data)
+  },
+
+  update(id: string, data: DeviceCreate): Promise<Device> {
+    return request.put(`/devices/${id}`, data)
+  },
+
+  delete(id: string): Promise<void> {
+    return request.delete(`/devices/${id}`)
+  },
+
+  getStats(): Promise<DeviceStats> {
+    return request.get('/devices/stats/summary')
+  }
+}

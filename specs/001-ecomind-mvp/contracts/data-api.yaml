@@ -1,0 +1,485 @@
+openapi: 3.0.3
+info:
+  title: EcoMind-AI Data Query API
+  description: 监测数据查询相关接口
+  version: 1.0.0
+
+paths:
+  /api/data/realtime:
+    get:
+      summary: 获取实时数据
+      description: 获取指定设备的最新监测数据
+      tags:
+        - Data
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: device_ids
+          in: query
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+          style: form
+          explode: false
+          description: 设备ID列表 (逗号分隔)
+        - name: param_codes
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+          description: 参数编码列表 (可选，不传则返回全部)
+      responses:
+        '200':
+          description: 实时数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeDataResponse'
+
+  /api/data/history:
+    get:
+      summary: 查询历史数据
+      description: 查询指定时间范围内的历史监测数据
+      tags:
+        - Data
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: device_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: param_codes
+          in: query
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+          description: 参数编码列表
+        - name: start_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: interval
+          in: query
+          schema:
+            type: string
+            enum: [1m, 5m, 10m, 30m, 1h, 1d]
+            default: 1m
+          description: 数据聚合间隔
+        - name: aggregation
+          in: query
+          schema:
+            type: string
+            enum: [avg, max, min, first, last]
+            default: avg
+          description: 聚合方式
+      responses:
+        '200':
+          description: 历史数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryDataResponse'
+
+  /api/data/compare:
+    get:
+      summary: 多参数对比查询
+      description: 查询多个参数进行对比分析（支持双Y轴）
+      tags:
+        - Data
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: device_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: left_params
+          in: query
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+          description: 左Y轴参数编码列表 (污染物浓度)
+        - name: right_params
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+          description: 右Y轴参数编码列表 (工况/用电)
+        - name: start_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: interval
+          in: query
+          schema:
+            type: string
+            enum: [1m, 5m, 10m, 30m, 1h, 1d]
+            default: 5m
+      responses:
+        '200':
+          description: 对比数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompareDataResponse'
+
+  /api/data/export:
+    get:
+      summary: 导出数据
+      description: 导出历史数据为 CSV 格式
+      tags:
+        - Data
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: device_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: param_codes
+          in: query
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+        - name: start_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: CSV 文件
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+
+  /api/data/dashboard:
+    get:
+      summary: 获取驾驶舱数据
+      description: 获取驾驶舱所需的汇总数据
+      tags:
+        - Data
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: organization_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 驾驶舱数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardData'
+
+  /api/data/map:
+    get:
+      summary: 获取地图点位数据
+      description: 获取 GIS 地图展示所需的设备点位和状态数据
+      tags:
+        - Data
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: organization_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: bounds
+          in: query
+          schema:
+            type: string
+          description: 地图边界 (sw_lat,sw_lng,ne_lat,ne_lng)
+      responses:
+        '200':
+          description: 地图点位数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapPointsResponse'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+
+  schemas:
+    RealtimeDataResponse:
+      type: object
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceRealtimeData'
+
+    DeviceRealtimeData:
+      type: object
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        mn:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        last_update:
+          type: string
+          format: date-time
+        params:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParamValue'
+
+    ParamValue:
+      type: object
+      properties:
+        param_code:
+          type: string
+        param_name:
+          type: string
+        value:
+          type: number
+        unit:
+          type: string
+        flag:
+          type: string
+          enum: [N, D, M, C]
+        is_anomaly:
+          type: boolean
+        anomaly_reason:
+          type: string
+        is_exceed:
+          type: boolean
+          description: 是否超标
+
+    HistoryDataResponse:
+      type: object
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        interval:
+          type: string
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataSeries'
+
+    DataSeries:
+      type: object
+      properties:
+        param_code:
+          type: string
+        param_name:
+          type: string
+        unit:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPoint'
+
+    DataPoint:
+      type: object
+      properties:
+        ts:
+          type: string
+          format: date-time
+        value:
+          type: number
+        flag:
+          type: string
+        is_anomaly:
+          type: boolean
+
+    CompareDataResponse:
+      type: object
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        timestamps:
+          type: array
+          items:
+            type: string
+            format: date-time
+        left_axis:
+          type: object
+          properties:
+            label:
+              type: string
+            unit:
+              type: string
+            series:
+              type: array
+              items:
+                $ref: '#/components/schemas/DataSeries'
+        right_axis:
+          type: object
+          properties:
+            label:
+              type: string
+            unit:
+              type: string
+            series:
+              type: array
+              items:
+                $ref: '#/components/schemas/DataSeries'
+
+    DashboardData:
+      type: object
+      properties:
+        device_stats:
+          $ref: '#/components/schemas/DeviceStats'
+        alarm_stats:
+          $ref: '#/components/schemas/AlarmStats'
+        data_stats:
+          $ref: '#/components/schemas/DataStats'
+        trend_data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+
+    DeviceStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        online:
+          type: integer
+        offline:
+          type: integer
+        warning:
+          type: integer
+
+    AlarmStats:
+      type: object
+      properties:
+        total_today:
+          type: integer
+        pending:
+          type: integer
+        critical:
+          type: integer
+        by_type:
+          type: object
+          additionalProperties:
+            type: integer
+
+    DataStats:
+      type: object
+      properties:
+        total_today:
+          type: integer
+        anomaly_rate:
+          type: number
+          format: float
+
+    TrendPoint:
+      type: object
+      properties:
+        time:
+          type: string
+          format: date-time
+        data_count:
+          type: integer
+        anomaly_count:
+          type: integer
+
+    MapPointsResponse:
+      type: object
+      properties:
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/MapPoint'
+
+    MapPoint:
+      type: object
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        mn:
+          type: string
+        name:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        status:
+          type: string
+          enum: [online, offline, warning, disabled]
+        has_alarm:
+          type: boolean
+        alarm_level:
+          type: string
+          enum: [critical, warning, info]

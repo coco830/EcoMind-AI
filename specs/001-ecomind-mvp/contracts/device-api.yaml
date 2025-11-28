@@ -1,0 +1,374 @@
+openapi: 3.0.3
+info:
+  title: EcoMind-AI Device Management API
+  description: 设备管理相关接口
+  version: 1.0.0
+
+paths:
+  /api/devices:
+    get:
+      summary: 获取设备列表
+      tags:
+        - Devices
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: organization_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: 按组织筛选
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [online, offline, warning, disabled]
+          description: 按状态筛选
+        - name: st
+          in: query
+          schema:
+            type: string
+          description: 按系统编码筛选
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: 搜索关键词 (MN号/名称)
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: 设备列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+    post:
+      summary: 创建设备
+      tags:
+        - Devices
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceCreate'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceResponse'
+        '400':
+          description: 参数错误
+        '409':
+          description: MN号已存在
+
+  /api/devices/{device_id}:
+    get:
+      summary: 获取设备详情
+      tags:
+        - Devices
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 设备详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceDetailResponse'
+        '404':
+          description: 设备不存在
+
+    put:
+      summary: 更新设备信息
+      tags:
+        - Devices
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceResponse'
+
+    delete:
+      summary: 删除设备
+      tags:
+        - Devices
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: 删除成功
+        '404':
+          description: 设备不存在
+
+  /api/devices/{device_id}/status:
+    put:
+      summary: 更新设备状态 (启用/停用)
+      tags:
+        - Devices
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum: [disabled, offline]
+      responses:
+        '200':
+          description: 状态更新成功
+
+  /api/devices/stats:
+    get:
+      summary: 获取设备统计概览
+      tags:
+        - Devices
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: organization_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 统计数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceStats'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+
+  schemas:
+    DeviceCreate:
+      type: object
+      required:
+        - mn
+        - name
+        - organization_id
+        - st
+      properties:
+        mn:
+          type: string
+          minLength: 14
+          maxLength: 24
+          description: 设备唯一标识 (MN号)
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: 设备名称/排口名称
+        organization_id:
+          type: string
+          format: uuid
+        st:
+          type: string
+          minLength: 2
+          maxLength: 4
+          description: 系统编码
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+        sm4_key:
+          type: string
+          maxLength: 32
+          description: SM4 加密密钥 (Hex格式)
+
+    DeviceUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        sm4_key:
+          type: string
+          maxLength: 32
+
+    DeviceResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        mn:
+          type: string
+        name:
+          type: string
+        organization_id:
+          type: string
+          format: uuid
+        organization_name:
+          type: string
+        st:
+          type: string
+        st_name:
+          type: string
+          description: 系统编码名称
+        latitude:
+          type: number
+        longitude:
+          type: number
+        status:
+          type: string
+          enum: [online, offline, warning, disabled]
+        last_data_time:
+          type: string
+          format: date-time
+        last_heartbeat:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    DeviceDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/DeviceResponse'
+        - type: object
+          properties:
+            recent_alarms:
+              type: array
+              items:
+                $ref: '#/components/schemas/AlarmBrief'
+            params_config:
+              type: array
+              items:
+                $ref: '#/components/schemas/ParamConfig'
+
+    DeviceListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceResponse'
+
+    DeviceStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        online:
+          type: integer
+        offline:
+          type: integer
+        warning:
+          type: integer
+        disabled:
+          type: integer
+
+    AlarmBrief:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        level:
+          type: string
+        message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ParamConfig:
+      type: object
+      properties:
+        param_code:
+          type: string
+        param_name:
+          type: string
+        unit:
+          type: string
+        threshold_low:
+          type: number
+        threshold_high:
+          type: number

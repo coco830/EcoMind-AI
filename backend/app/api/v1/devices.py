@@ -1,0 +1,291 @@
+"""Device management API endpoints."""
+
+import json
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.postgres import get_db
+from app.models.device import (
+    Device, DeviceCreate, DeviceResponse, DeviceStatus, DeviceType, ThresholdConfig
+)
+from app.models.user import User
+from app.api.deps import get_current_active_user, require_operator
+
+router = APIRouter()
+
+
+def _serialize_thresholds(thresholds: ThresholdConfig | None) -> str | None:
+    """Serialize threshold config to JSON string."""
+    if thresholds is None:
+        return None
+    return thresholds.model_dump_json()
+
+
+def _deserialize_thresholds(thresholds_json: str | None) -> ThresholdConfig | None:
+    """Deserialize threshold config from JSON string."""
+    if not thresholds_json:
+        return None
+    try:
+        data = json.loads(thresholds_json)
+        return ThresholdConfig.model_validate(data)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _device_to_response(device: Device) -> DeviceResponse:
+    """Convert Device ORM model to DeviceResponse with threshold parsing."""
+    # Parse pollutant_codes
+    pollutant_codes = None
+    if device.pollutant_codes:
+        pollutant_codes = [c.strip() for c in device.pollutant_codes.split(",") if c.strip()]
+
+    # Parse thresholds
+    thresholds = _deserialize_thresholds(device.thresholds)
+
+    return DeviceResponse(
+        id=device.id,
+        mn=device.mn,
+        name=device.name,
+        device_type=DeviceType(device.device_type),
+        status=DeviceStatus(device.status),
+        org_id=device.org_id,
+        latitude=device.latitude,
+        longitude=device.longitude,
+        address=device.address,
+        pollutant_codes=pollutant_codes,
+        thresholds=thresholds,
+        last_heartbeat=device.last_heartbeat,
+        created_at=device.created_at,
+        updated_at=device.updated_at,
+    )
+
+
+class DeviceListResponse:
+    """Paginated device list response."""
+
+    items: list[DeviceResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get("", response_model=list[DeviceResponse])
+async def list_devices(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    org_id: UUID | None = None,
+    device_status: DeviceStatus | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+) -> list[DeviceResponse]:
+    """List devices with optional filters."""
+    query = select(Device)
+
+    # Filter by organization if user is not admin
+    if current_user.org_id:
+        query = query.where(Device.org_id == current_user.org_id)
+    elif org_id:
+        query = query.where(Device.org_id == org_id)
+
+    if device_status:
+        query = query.where(Device.status == device_status.value)
+
+    query = query.offset(skip).limit(limit)
+    result = await db.execute(query)
+    devices = result.scalars().all()
+
+    return [_device_to_response(d) for d in devices]
+
+
+@router.get("/{device_id}", response_model=DeviceResponse)
+async def get_device(
+    device_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> DeviceResponse:
+    """Get device by ID."""
+    result = await db.execute(select(Device).where(Device.id == device_id))
+    device = result.scalar_one_or_none()
+
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device not found",
+        )
+
+    # Check organization access
+    if current_user.org_id and device.org_id != current_user.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this device",
+        )
+
+    return _device_to_response(device)
+
+
+@router.post("", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED)
+async def create_device(
+    device_data: DeviceCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(require_operator)],
+) -> DeviceResponse:
+    """Create a new device. Non-superadmin users can only create devices in their own org."""
+    import structlog
+    logger = structlog.get_logger()
+    logger.info("Creating device", mn=device_data.mn, name=device_data.name, org_id=str(device_data.org_id) if device_data.org_id else "None", user_org=str(current_user.org_id))
+
+    # Determine the organization ID first
+    org_id = device_data.org_id
+
+    # If org_id not provided, use current user's organization
+    if org_id is None:
+        if current_user.org_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User must belong to an organization to create devices",
+            )
+        org_id = current_user.org_id
+
+    # Check organization access for non-superadmin users
+    if not current_user.is_superadmin:
+        if current_user.org_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User must belong to an organization",
+            )
+        if org_id != current_user.org_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot create device for another organization",
+            )
+
+    # Check if MN already exists WITHIN THE SAME ORGANIZATION (multi-tenant isolation)
+    result = await db.execute(
+        select(Device).where(Device.mn == device_data.mn, Device.org_id == org_id)
+    )
+    if result.scalar_one_or_none():
+        logger.warning("Device MN already exists in organization", mn=device_data.mn, org_id=str(org_id))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Device with this MN already exists in your organization",
+        )
+
+    device = Device(
+        mn=device_data.mn,
+        name=device_data.name,
+        device_type=device_data.device_type.value,
+        org_id=org_id,
+        latitude=device_data.latitude,
+        longitude=device_data.longitude,
+        address=device_data.address,
+        pollutant_codes=",".join(device_data.pollutant_codes) if device_data.pollutant_codes else None,
+        thresholds=_serialize_thresholds(device_data.thresholds),
+    )
+    db.add(device)
+    await db.flush()
+    await db.refresh(device)
+
+    return _device_to_response(device)
+
+
+@router.put("/{device_id}", response_model=DeviceResponse)
+async def update_device(
+    device_id: UUID,
+    device_data: DeviceCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(require_operator)],
+) -> DeviceResponse:
+    """Update an existing device. Users can only update devices in their organization."""
+    result = await db.execute(select(Device).where(Device.id == device_id))
+    device = result.scalar_one_or_none()
+
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device not found",
+        )
+
+    # Check organization access for existing device
+    if not current_user.is_superadmin:
+        if current_user.org_id is None or device.org_id != current_user.org_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this device",
+            )
+        # Also prevent changing device to another organization
+        if device_data.org_id != current_user.org_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot transfer device to another organization",
+            )
+
+    # Update fields
+    device.mn = device_data.mn
+    device.name = device_data.name
+    device.device_type = device_data.device_type.value
+    device.org_id = device_data.org_id
+    device.latitude = device_data.latitude
+    device.longitude = device_data.longitude
+    device.address = device_data.address
+    device.pollutant_codes = ",".join(device_data.pollutant_codes) if device_data.pollutant_codes else None
+    device.thresholds = _serialize_thresholds(device_data.thresholds)
+
+    await db.flush()
+    await db.refresh(device)
+
+    return _device_to_response(device)
+
+
+@router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_device(
+    device_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(require_operator)],
+) -> None:
+    """Delete a device. Users can only delete devices in their organization."""
+    result = await db.execute(select(Device).where(Device.id == device_id))
+    device = result.scalar_one_or_none()
+
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device not found",
+        )
+
+    # Check organization access
+    if not current_user.is_superadmin:
+        if current_user.org_id is None or device.org_id != current_user.org_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this device",
+            )
+
+    await db.delete(device)
+
+
+@router.get("/stats/summary")
+async def get_device_stats(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> dict:
+    """Get device statistics summary."""
+    query = select(Device)
+    if current_user.org_id:
+        query = query.where(Device.org_id == current_user.org_id)
+
+    result = await db.execute(query)
+    devices = result.scalars().all()
+
+    stats = {
+        "total": len(devices),
+        "online": sum(1 for d in devices if d.status == DeviceStatus.ONLINE.value),
+        "offline": sum(1 for d in devices if d.status == DeviceStatus.OFFLINE.value),
+        "alarm": sum(1 for d in devices if d.status == DeviceStatus.ALARM.value),
+        "maintenance": sum(1 for d in devices if d.status == DeviceStatus.MAINTENANCE.value),
+    }
+
+    return stats

@@ -1,0 +1,146 @@
+📘 EcoMind-AI：下一代智慧环保SaaS平台项目文档
+> **适用对象**: AI 编程助手 (Cursor, Windsurf, Copilot), 开发团队
+> **项目版本**: v1.0.0 (MVP)
+> **核心标准**: HJ 212-2025 (SM4国密/工况/用电), HJ 212-2017
+
+## 1. 🎯 项目愿景与目标
+
+打造一个**轻硬件、重软件、AI驱动**的环保管家平台。不依赖特定硬件，通过纯软件手段实现对数采仪数据的深度挖掘。
+*   **数据层**: 兼容最新国标，实现“产（工况）+治（用电）+排（浓度）”三维数据同屏。
+*   **AI层**: 具备异常检测、反造假分析、趋势预测能力的智能中台。
+*   **应用层**: 提供**企业级、现代化**的 Web 管理端，而非简陋的 demo。
+
+---
+
+## 2. 🏗️ 技术架构选型 (Technical Stack)
+
+为了兼顾**开发效率**（利用 Python 生态）和**交付质量**（成熟的前端交互），我们采用以下架构。**AI 在生成代码时必须严格遵守此选型。**
+
+### 2.1 后端 (Backend) - Python Native
+*   **框架**: **FastAPI** (高性能、异步、自动生成文档)。
+*   **网络接入**: **asyncio + uvloop** (构建 TCP Gateway 处理 HJ212 报文)。
+*   **数据库**: **TDengine** (时序数据) + **PostgreSQL/SQLite** (业务数据/用户权限)。
+*   **加密**: **gmssl** (处理 HJ212-2025 的 SM4 解密)。
+*   **AI 引擎**: **Scikit-learn / XGBoost** (预测与异常检测) + **LangChain** (RAG 知识库)。
+
+### 2.2 前端 (Frontend) - 现代化单页应用
+*   *虽然团队主要熟悉 Python，但为了商业交付质量，前端交由 AI 生成标准的 Vue 3 代码。*
+*   **框架**: **Vue 3 (Composition API)** + **Vite**。
+*   **UI 组件库**: **Element Plus** (国内最成熟的 B 端组件库，符合环保行业审美)。
+*   **图表库**: **ECharts 5** (处理复杂的环保曲线、地图)。
+*   **状态管理**: **Pinia**。
+
+---
+
+## 3. 🛠️ 核心功能模块与实现路径
+
+### 模块 A: 泛在接入网关 (IoT Gateway)
+*   **职责**: 监听 TCP 端口，维持长连接，处理拆包/粘包，SM4 解密，协议解析。
+*   **难点**: 兼容 2017/2025 双标准。
+*   **逻辑**: 
+    1.  收到报文 -> 校验头部 `##`。
+    2.  提取 `Flag` -> 判断是否 SM4 加密。
+    3.  若加密 -> 调用 `gmssl` 解密 `CP` 段。
+    4.  解析 `CP` 段 -> 提取 `w`(污), `d`(电), `p`(工况) 参数。
+    5.  写入 TDengine。
+
+### 模块 B: AI 智能中台 (Intelligence Center)
+*   **职责**: 消费清洗后的数据，输出分析结果。
+*   **功能**:
+    *   **规则引擎**: 实时判断 `Flag=D/M/C`，标记无效数据。
+    *   **关联分析**: 周期性运行 XGBoost，输入（电流+流量），输出（理论浓度），计算偏差值。
+    *   **Copilot**: 基于 RAG 的问答接口，解释“为什么报警”。
+
+### 模块 C: 业务管理平台 (Web Dashboard)
+*   **职责**: 客户交互界面。
+*   **页面规划**:
+    *   **全景驾驶舱**: GIS 地图 + 实时报警滚动 + 关键指标卡片。
+    *   **数据查询**: 支持 `w/d/p` 多参数叠加对比的折线图（如：电流曲线和浓度曲线画在一起）。
+    *   **AI 诊断报告**: 展示 AI 生成的文字报告。
+    *   **设备管理**: 生成 MN 号，查看在线状态。
+
+---
+
+## 4. 🤖 Rules for AI (AI 编程军规)
+
+**这是本文档最重要的部分。请 AI 助手在生成代码时，必须逐条核对以下规则，严禁“放飞自我”。**
+
+### Rule 1: 协议解析严格化 (Protocol Strictness)
+*   **禁止**使用正则表达式解析复杂的嵌套报文，必须编写专用的 `Parser` 类。
+*   **必须**实现 CRC16 校验，校验失败直接丢弃或记录错误日志。
+*   **2025支持**: 必须在解析逻辑中预留 SM4 解密钩子。即使当前没有密钥，代码结构也要支持 `if encryption_enabled: decrypt()`。
+*   **字段映射**: 所有的参数编码（如 `w01001`, `d20101`）必须定义在独立的 `enums.py` 或 `mappings.py` 中，禁止在逻辑代码中写死（Hardcode）字符串。
+
+### Rule 2: 后端代码规范 (Backend Style)
+*   **Type Hinting**: 所有 Python 函数必须包含类型注解（Type Hints），通过 `mypy` 检查。
+*   **Pydantic**: 所有数据交互（API 请求/响应、数据库模型）必须使用 Pydantic Model 定义。
+*   **Async First**: 由于涉及 I/O（网络、数据库），所有 I/O 操作必须使用 `async/await`。
+*   **禁止引入重型框架**: 不要引入 Django，不要引入 Java/C# 依赖。保持 `requirements.txt` 精简。
+
+### Rule 3: 前端生成约束 (Frontend Constraints)
+*   **组件一致性**: 严禁混用 UI 库。所有按钮、表格、表单**只能**使用 `Element Plus`。
+*   **响应式布局**: 生成的页面必须适配 PC 端浏览器（1920x1080 及 1366x768）。
+*   **Mock Data**: 在后端 API 未通之前，前端代码必须包含 `mock` 数据生成逻辑，保证界面是可以预览和交互的。
+*   **ECharts 封装**: 不要把庞大的 ECharts 配置项写在 Vue 组件里，必须封装成独立的 Hook 或 Component（如 `useChart.js`）。
+
+### Rule 4: 工程化结构 (Project Structure)
+AI 生成的文件结构必须严格遵循：
+
+```text
+EcoMind/
+├── backend/                  # Python 后端
+│   ├── app/
+│   │   ├── core/             # 配置、安全、SM4算法
+│   │   ├── protocols/        # HJ212 解析器核心 (Parser, Enums)
+│   │   ├── gateway/          # TCP Server
+│   │   ├── models/           # Pydantic Models
+│   │   ├── api/              # FastAPI Routers
+│   │   └── services/         # 业务逻辑 (AI调用, DB操作)
+│   ├── main.py
+│   └── requirements.txt
+├── frontend/                 # Vue 3 前端
+│   ├── src/
+│   │   ├── api/              # Axios 封装
+│   │   ├── components/       # 公共组件 (Chart, Table)
+│   │   ├── views/            # 页面 (Dashboard, Report)
+│   │   └── stores/           # Pinia 状态
+│   └── package.json
+└── docker-compose.yml        # 一键启动 (Backend + Frontend + TDengine)
+```
+
+---
+
+## 5. 🚀 项目推进步骤 (Step-by-Step)
+
+请 AI 按照以下顺序协助我进行开发：
+
+### 第一阶段：协议核心 (The Protocol Core)
+1.  **任务**: 编写 `backend/app/protocols` 模块。
+2.  **输入**: HJ 212-2017 和 2025 的标准定义。
+3.  **输出**: 一个纯 Python 的解析器，能把 `QN=...&&...` 字符串转成 `{ "QN": "...", "Data": {...} }` 的字典，并支持 SM4 解密。
+
+### 第二阶段：数据流转 (Data Pipeline)
+1.  **任务**: 编写 `backend/app/gateway` 和 `backend/app/db`。
+2.  **输入**: 模拟的数采仪报文发送工具。
+3.  **输出**: TCP Server 启动，接收报文，解析后存入 TDengine，并在控制台打印清洗后的数据。
+
+### 第三阶段：可视化 MVP (Frontend MVP)
+1.  **任务**: 初始化 Vue 3 项目，搭建“驾驶舱”框架。
+2.  **输入**: 想要展示的字段列表（如：排口名称、COD浓度、风机电流）。
+3.  **输出**: 一个漂亮的登录页 + 主页，包含一个 ECharts 实时动态折线图。
+
+### 第四阶段：AI 注入 (AI Injection)
+1.  **任务**: 编写 `backend/app/services/ai_service.py`。
+2.  **输入**: 历史数据 CSV。
+3.  **输出**: 简单的异常检测算法上线，当前端查询数据时，返回的数据包含 `is_anomaly: true/false` 标记，前端标红显示。
+
+---
+
+## 6. 💡 提示词示例 (Prompt Examples)
+
+**当你需要 AI 写解析器时：**
+> "作为 Python 专家，请根据 HJ 212-2025 标准，为我编写一个 `HJ212Parser` 类。要求：1. 使用 `gmssl` 处理可能的 SM4 加密；2. 提取 CP 段中的 `w` (水), `a` (气), `d` (电), `p` (工况) 参数；3. 输出 Pydantic 对象。请确保代码健壮性，处理 CRC 校验失败的情况。"
+
+**当你需要 AI 写前端图表时：**
+> "作为 Vue 3 和 ECharts 专家，请为我写一个 `RealTimeLineChart.vue` 组件。要求：1. 使用 Element Plus 的 Card 包裹；2. 接收 `props` 传入的时间序列数据；3. 支持双 Y 轴，左轴显示污染物浓度，右轴显示工况电流值。请提供 Mock 数据以便我直接预览效果。"
+
