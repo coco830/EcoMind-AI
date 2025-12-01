@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { dashboardApi, type DashboardStats, type TrendParams } from '@/api/dashboard'
 import { deviceApi, type Device } from '@/api/devices'
@@ -22,6 +23,9 @@ import {
   COMMON_POLLUTANTS,
   HEAVY_METAL_POLLUTANTS,
 } from '@/config/pollutants'
+
+// Router
+const router = useRouter()
 
 // Dashboard stats
 const stats = ref<DashboardStats>({
@@ -64,8 +68,7 @@ const showActualDataOnly = ref(true)
 // Generate grouped pollutant options (by category)
 const groupedPollutantOptions = computed(() => generateGroupedPollutantOptions())
 
-// Quick filter presets - 行业快捷预设
-// 注：电镀行业重金属已包含在"重金属"分类中
+// Quick filter presets
 const pollutantPresets = [
   { label: '设备实际', value: 'actual', codes: [], hasSubmenu: false },
   { label: '常用指标', value: 'common', codes: COMMON_POLLUTANTS, hasSubmenu: false },
@@ -81,12 +84,12 @@ const pollutantPresets = [
     ]
   },
 ]
-const selectedPreset = ref('actual')  // 默认显示设备实际数据
-const heavyMetalFilter = ref<string | null>(null)  // 重金属子分类筛选
+const selectedPreset = ref('actual')
+const heavyMetalFilter = ref<string | null>(null)
 
-// 展开/收起状态
+// Expand/collapse state
 const isExpanded = ref(false)
-const defaultVisibleCount = 8  // 默认显示数量
+const defaultVisibleCount = 8
 
 // Selected pollutant for trend chart
 const selectedPollutant = ref<string>('w01018')
@@ -107,11 +110,10 @@ const selectedDeviceName = computed(() => {
   return device?.name || selectedDeviceForPrediction.value
 })
 
-// 过滤后的活跃污染物（支持重金属子分类筛选）
+// Filtered active pollutants
 const filteredActivePollutants = computed(() => {
   let pollutants = activePollutants.value
 
-  // 如果选择了重金属预设且有子分类筛选
   if (selectedPreset.value === 'heavy_metals' && heavyMetalFilter.value) {
     pollutants = pollutants.filter(code => {
       const info = getPollutantInfo(code)
@@ -122,17 +124,17 @@ const filteredActivePollutants = computed(() => {
   return pollutants
 })
 
-// 可见的污染物数量
+// Visible pollutant count
 const visiblePollutantCount = computed(() => {
   return isExpanded.value ? filteredActivePollutants.value.length : defaultVisibleCount
 })
 
-// 是否显示展开按钮
+// Show expand button
 const showExpandButton = computed(() => {
   return filteredActivePollutants.value.length > defaultVisibleCount
 })
 
-// 剩余未显示数量
+// Remaining count
 const remainingCount = computed(() => {
   return Math.max(0, filteredActivePollutants.value.length - defaultVisibleCount)
 })
@@ -195,14 +197,11 @@ const loadData = async () => {
     stats.value = statsData
     devices.value = deviceList
 
-    // Auto-select first device
     if (!selectedDeviceForPrediction.value && deviceList.length > 0) {
       selectedDeviceForPrediction.value = deviceList[0].mn
-      // Parse device's active pollutants if available
       parseDevicePollutants(deviceList[0])
     }
 
-    // If in "actual" mode (default), load device pollutants from actual data
     if (showActualDataOnly.value && selectedDeviceForPrediction.value) {
       await loadDevicePollutants()
     }
@@ -249,9 +248,7 @@ const loadTrend = async () => {
     const trend = await dashboardApi.getTrend(params)
     trendData.value = trend
 
-    // Update latest values from trend data
     updateLatestValues(trend)
-
     updateChart()
   } catch (e) {
     console.error('Failed to load trend data:', e)
@@ -276,7 +273,7 @@ const updateLatestValues = (data: MonitoringData[]) => {
   latestValues.value = { ...latestValues.value, ...latest }
 }
 
-// Load all pollutants for the selected device (for "设备实际" mode)
+// Load all pollutants for the selected device
 const loadDevicePollutants = async () => {
   if (!selectedDeviceForPrediction.value) return
 
@@ -284,21 +281,14 @@ const loadDevicePollutants = async () => {
     const data = await dashboardApi.getDevicePollutants(selectedDeviceForPrediction.value, 24)
 
     if (data.length > 0) {
-      // Extract unique pollutant codes from actual device data
       const detectedCodes = data.map(item => item.pollutant_code)
       activePollutants.value = detectedCodes
-
-      // Update latest values
       updateLatestValues(data)
-
-      console.log(`Detected ${detectedCodes.length} pollutants from device data:`, detectedCodes)
     } else {
-      console.log('No data found for device, falling back to common pollutants')
       activePollutants.value = COMMON_POLLUTANTS
     }
   } catch (e) {
     console.error('Failed to load device pollutants:', e)
-    // Fallback to common pollutants
     activePollutants.value = COMMON_POLLUTANTS
   }
 }
@@ -330,7 +320,6 @@ const onDeviceChange = async () => {
     parseDevicePollutants(device)
   }
 
-  // If in "actual" mode, reload device pollutants for the new device
   if (showActualDataOnly.value) {
     await loadDevicePollutants()
   }
@@ -347,21 +336,17 @@ const onPresetChange = async (presetValue?: string) => {
   selectedPreset.value = value
   const preset = pollutantPresets.find(p => p.value === value)
 
-  // 重置展开状态和子分类筛选
   isExpanded.value = false
   heavyMetalFilter.value = null
 
   if (preset) {
     if (preset.value === 'actual') {
-      // 设备实际模式：从设备实际上报数据中检测所有污染物
       showActualDataOnly.value = true
       await loadDevicePollutants()
       await refreshTrendAndPrediction()
     } else {
-      // 预设模式：使用固定列表
       showActualDataOnly.value = false
       activePollutants.value = preset.codes
-      // Set first pollutant as selected
       if (preset.codes.length > 0 && !preset.codes.includes(selectedPollutant.value)) {
         selectedPollutant.value = preset.codes[0]
         refreshTrendAndPrediction()
@@ -370,13 +355,11 @@ const onPresetChange = async (presetValue?: string) => {
   }
 }
 
-// 重金属子分类筛选
 const onHeavyMetalFilterChange = (filter: string | null) => {
   heavyMetalFilter.value = filter
-  isExpanded.value = false  // 切换分类时收起
+  isExpanded.value = false
 }
 
-// 展开/收起切换
 const toggleExpand = () => {
   isExpanded.value = !isExpanded.value
 }
@@ -402,8 +385,6 @@ const injectDemoData = async () => {
     })
 
     ElMessage.success(`${result.message}（${result.pollutants} 种污染物，${result.data_points} 个数据点）`)
-
-    // Refresh data after injection
     await loadData()
   } catch (e: unknown) {
     console.error('Failed to inject demo data:', e)
@@ -419,7 +400,79 @@ const handleDeviceClick = (device: Device) => {
   refreshTrendAndPrediction()
 }
 
-// Update chart with dynamic Y-axis (scale: true for auto-scaling)
+// Apple-style ECharts configuration
+const getAppleChartOptions = () => ({
+  backgroundColor: 'transparent',
+  textStyle: {
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif'
+  },
+  grid: {
+    left: '3%',
+    right: '4%',
+    bottom: '15%',
+    top: '8%',
+    containLabel: true
+  },
+  tooltip: {
+    trigger: 'axis',
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    borderColor: 'transparent',
+    borderRadius: 12,
+    padding: [12, 16],
+    boxShadow: '0 4px 24px rgba(0, 0, 0, 0.12)',
+    textStyle: {
+      color: '#1D1D1F',
+      fontSize: 13,
+      fontFamily: 'Inter, -apple-system, sans-serif'
+    },
+    axisPointer: {
+      type: 'cross',
+      crossStyle: {
+        color: '#86868B'
+      },
+      lineStyle: {
+        color: 'rgba(0, 122, 255, 0.2)',
+        width: 1,
+        type: 'dashed'
+      }
+    }
+  },
+  xAxis: {
+    type: 'category',
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: {
+      color: '#86868B',
+      fontSize: 11,
+      rotate: 45
+    },
+    splitLine: {
+      show: true,
+      lineStyle: {
+        color: 'rgba(0, 0, 0, 0.04)',
+        type: 'dashed'
+      }
+    }
+  },
+  yAxis: {
+    type: 'value',
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: {
+      color: '#86868B',
+      fontSize: 11
+    },
+    splitLine: {
+      show: true,
+      lineStyle: {
+        color: 'rgba(0, 0, 0, 0.04)',
+        type: 'dashed'
+      }
+    }
+  }
+})
+
+// Update chart with Apple-style design
 const updateChart = () => {
   if (!trendChart) return
 
@@ -435,14 +488,37 @@ const updateChart = () => {
 
     const valueMap = new Map(data.map(d => [d.ts, d.value]))
     const values = timestamps.map(ts => valueMap.get(ts) ?? null)
+    const color = getPollutantColor(code)
 
     series.push({
       name,
       type: 'line',
       smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      showSymbol: false,
       data: values,
-      areaStyle: { opacity: 0.1 },
-      emphasis: { focus: 'series' }
+      lineStyle: {
+        width: 2.5,
+        color: color
+      },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [
+            { offset: 0, color: `${color}30` },
+            { offset: 1, color: `${color}05` }
+          ]
+        }
+      },
+      emphasis: {
+        focus: 'series',
+        itemStyle: {
+          borderWidth: 2,
+          borderColor: '#fff'
+        }
+      }
     })
   }
 
@@ -502,16 +578,28 @@ const updateChart = () => {
     series.length = 0
     legendData.length = 0
 
-    const mainColor = getPollutantColor(selectedPollutant.value)
+    const mainColor = '#007AFF'
 
     legendData.push(historicalName)
     series.push({
       name: historicalName,
       type: 'line',
       smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      showSymbol: false,
       data: historicalValues,
-      lineStyle: { width: 2 },
-      areaStyle: { opacity: 0.1, color: mainColor },
+      lineStyle: { width: 2.5, color: mainColor },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [
+            { offset: 0, color: 'rgba(0, 122, 255, 0.2)' },
+            { offset: 1, color: 'rgba(0, 122, 255, 0.02)' }
+          ]
+        }
+      },
       itemStyle: { color: mainColor },
       emphasis: { focus: 'series' },
       z: 10
@@ -548,13 +636,13 @@ const updateChart = () => {
       data: bandValues,
       lineStyle: { opacity: 0 },
       areaStyle: {
-        opacity: 0.3,
+        opacity: 0.4,
         color: {
           type: 'linear',
           x: 0, y: 0, x2: 0, y2: 1,
           colorStops: [
-            { offset: 0, color: 'rgba(103, 194, 58, 0.4)' },
-            { offset: 1, color: 'rgba(103, 194, 58, 0.1)' }
+            { offset: 0, color: 'rgba(52, 199, 89, 0.3)' },
+            { offset: 1, color: 'rgba(52, 199, 89, 0.05)' }
           ]
         }
       },
@@ -569,22 +657,26 @@ const updateChart = () => {
       name: predictionName,
       type: 'line',
       smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      showSymbol: false,
       data: predictionValues,
-      lineStyle: { width: 2, type: 'dashed' },
-      itemStyle: { color: '#67c23a' },
+      lineStyle: { width: 2.5, type: 'dashed', color: '#34C759' },
+      itemStyle: { color: '#34C759' },
       emphasis: { focus: 'series' },
       z: 20
     })
 
     const yAxisName = `${pollutantLabel} (${valueUnit})`
 
+    const baseOptions = getAppleChartOptions()
     trendChart.setOption({
+      ...baseOptions,
       tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'cross' },
+        ...baseOptions.tooltip,
         formatter: (params: any) => {
           if (!Array.isArray(params)) return ''
-          let result = `<div style="font-weight:bold">${params[0].axisValue}</div>`
+          let result = `<div style="font-weight:600;margin-bottom:8px;color:#1D1D1F">${params[0].axisValue}</div>`
 
           for (const p of params) {
             if (p.value !== null && p.value !== undefined) {
@@ -593,9 +685,9 @@ const updateChart = () => {
               }
 
               const isPrediction = p.seriesName.includes('预测')
-              const marker = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color};margin-right:5px;"></span>`
+              const marker = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:8px;"></span>`
               const formattedValue = formatPollutantValue(selectedPollutant.value, p.value)
-              result += `<div>${marker}${p.seriesName}: ${formattedValue} ${valueUnit}${isPrediction ? ' (AI预测)' : ''}</div>`
+              result += `<div style="display:flex;align-items:center;margin:4px 0">${marker}<span style="color:#1D1D1F">${p.seriesName}:</span> <span style="font-weight:600;margin-left:4px">${formattedValue}</span> <span style="color:#86868B;margin-left:2px">${valueUnit}</span>${isPrediction ? '<span style="color:#34C759;font-size:11px;margin-left:6px">(AI)</span>' : ''}</div>`
 
               if (isPrediction) {
                 const timeKey = params[0].axisValue
@@ -603,7 +695,7 @@ const updateChart = () => {
                 if (pred) {
                   const lowerFormatted = formatPollutantValue(selectedPollutant.value, pred.lower)
                   const upperFormatted = formatPollutantValue(selectedPollutant.value, pred.upper)
-                  result += `<div style="color:#67c23a;font-size:11px;margin-left:15px;">80%置信区间: [${lowerFormatted}, ${upperFormatted}]</div>`
+                  result += `<div style="color:#34C759;font-size:11px;margin-left:16px;margin-top:2px">置信区间: [${lowerFormatted}, ${upperFormatted}]</div>`
                 }
               }
             }
@@ -614,37 +706,23 @@ const updateChart = () => {
       legend: {
         data: [historicalName, predictionName, confidenceBandName],
         bottom: 0,
+        textStyle: { color: '#86868B', fontSize: 12 },
         selected: { [confidenceLowerName]: false }
       },
-      grid: {
-        left: '3%',
-        right: '4%',
-        bottom: '15%',
-        top: '10%',
-        containLabel: true
-      },
       xAxis: {
-        type: 'category',
-        data: allTimes,
-        axisLabel: { rotate: 45, fontSize: 10 }
+        ...baseOptions.xAxis,
+        data: allTimes
       },
       yAxis: {
-        type: 'value',
+        ...baseOptions.yAxis,
         name: yAxisName,
-        scale: true, // IMPORTANT: Auto-scale for small values (heavy metals)
-        min: (value: { min: number }) => {
-          // Add 10% padding below min value, ensure non-negative
-          const padding = Math.abs(value.min) * 0.1
-          return Math.max(0, value.min - padding)
-        },
-        max: (value: { max: number }) => {
-          // Add 10% padding above max value
-          const padding = Math.abs(value.max) * 0.1
-          return value.max + padding
-        },
-        splitNumber: 5, // Ensure reasonable number of ticks
+        nameTextStyle: { color: '#86868B', fontSize: 11 },
+        scale: true,
+        min: (value: { min: number }) => Math.max(0, value.min - Math.abs(value.min) * 0.1),
+        max: (value: { max: number }) => value.max + Math.abs(value.max) * 0.1,
+        splitNumber: 5,
         axisLabel: {
-          fontSize: 10,
+          ...baseOptions.yAxis.axisLabel,
           formatter: (value: number) => formatPollutantValue(selectedPollutant.value, value)
         }
       },
@@ -663,20 +741,21 @@ const updateChart = () => {
     })
   }
 
+  const baseOptions = getAppleChartOptions()
   trendChart.setOption({
+    ...baseOptions,
     tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' },
+      ...baseOptions.tooltip,
       formatter: (params: any) => {
         if (!Array.isArray(params)) return ''
-        let result = `<div style="font-weight:bold">${params[0].axisValue}</div>`
+        let result = `<div style="font-weight:600;margin-bottom:8px;color:#1D1D1F">${params[0].axisValue}</div>`
         for (const p of params) {
           if (p.value !== null && p.value !== undefined) {
             const code = Object.keys(groupedData.value).find(k => getPollutantName(k) === p.seriesName)
             const formattedValue = code ? formatPollutantValue(code, p.value) : p.value.toFixed(2)
             const unit = code ? getPollutantUnit(code) : 'mg/L'
-            const marker = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color};margin-right:5px;"></span>`
-            result += `<div>${marker}${p.seriesName}: ${formattedValue} ${unit}</div>`
+            const marker = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:8px;"></span>`
+            result += `<div style="display:flex;align-items:center;margin:4px 0">${marker}<span style="color:#1D1D1F">${p.seriesName}:</span> <span style="font-weight:600;margin-left:4px">${formattedValue}</span> <span style="color:#86868B;margin-left:2px">${unit}</span></div>`
           }
         }
         return result
@@ -684,37 +763,23 @@ const updateChart = () => {
     },
     legend: {
       data: legendData,
-      bottom: 0
-    },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '15%',
-      top: '10%',
-      containLabel: true
+      bottom: 0,
+      textStyle: { color: '#86868B', fontSize: 12 }
     },
     xAxis: {
-      type: 'category',
-      data: times,
-      axisLabel: { rotate: 45, fontSize: 10 }
+      ...baseOptions.xAxis,
+      data: times
     },
     yAxis: {
-      type: 'value',
+      ...baseOptions.yAxis,
       name: `${currentPollutantMeta.value.label} (${currentPollutantMeta.value.unit})`,
-      scale: true, // IMPORTANT: Auto-scale
-      min: (value: { min: number }) => {
-        // Add 10% padding below min value, ensure non-negative
-        const padding = Math.abs(value.min) * 0.1
-        return Math.max(0, value.min - padding)
-      },
-      max: (value: { max: number }) => {
-        // Add 10% padding above max value
-        const padding = Math.abs(value.max) * 0.1
-        return value.max + padding
-      },
+      nameTextStyle: { color: '#86868B', fontSize: 11 },
+      scale: true,
+      min: (value: { min: number }) => Math.max(0, value.min - Math.abs(value.min) * 0.1),
+      max: (value: { max: number }) => value.max + Math.abs(value.max) * 0.1,
       splitNumber: 5,
       axisLabel: {
-        fontSize: 10,
+        ...baseOptions.yAxis.axisLabel,
         formatter: (value: number) => formatPollutantValue(selectedPollutant.value, value)
       }
     },
@@ -760,375 +825,335 @@ onUnmounted(() => {
       class="error-alert"
     />
 
-    <!-- Stats cards -->
-    <el-row :gutter="20" class="stats-row">
-      <el-col :span="6">
-        <el-card shadow="hover" class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon" style="background: #409eff">
-              <el-icon size="32"><Monitor /></el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-value">{{ stats.device_count }}</div>
-              <div class="stat-label">设备总数</div>
-            </div>
+    <!-- KPI Stats Cards - Apple Style -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: rgba(0, 122, 255, 0.1)">
+          <el-icon size="24" color="#007AFF"><Monitor /></el-icon>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-value">{{ stats.device_count }}</div>
+          <div class="kpi-label">设备总数</div>
+          <div class="kpi-detail">
+            <span class="online">{{ stats.online_count }} 在线</span>
+            <span class="divider">/</span>
+            <span class="offline">{{ stats.offline_count }} 离线</span>
           </div>
-          <div class="stat-footer">
-            <span class="online">在线: {{ stats.online_count }}</span>
-            <span class="offline">离线: {{ stats.offline_count }}</span>
-          </div>
-        </el-card>
-      </el-col>
+        </div>
+      </div>
 
-      <el-col :span="6">
-        <el-card shadow="hover" class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon" style="background: #67c23a">
-              <el-icon size="32"><DataLine /></el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-value">{{ trendData.length }}</div>
-              <div class="stat-label">数据点数</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background: rgba(52, 199, 89, 0.1)">
+          <el-icon size="24" color="#34C759"><DataLine /></el-icon>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-value">{{ trendData.length }}</div>
+          <div class="kpi-label">数据点数</div>
+          <div class="kpi-detail">24小时内</div>
+        </div>
+      </div>
 
-      <el-col :span="6">
-        <el-card shadow="hover" class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon" style="background: #e6a23c">
-              <el-icon size="32"><Bell /></el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-value">{{ stats.pending_alarms }}</div>
-              <div class="stat-label">待处理告警</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
+      <div class="kpi-card clickable" @click="router.push('/alarms')">
+        <div class="kpi-icon" style="background: rgba(255, 149, 0, 0.1)">
+          <el-icon size="24" color="#FF9500"><Bell /></el-icon>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-value">{{ stats.pending_alarms }}</div>
+          <div class="kpi-label">异常数据告警</div>
+          <div class="kpi-detail">点击查看详情</div>
+        </div>
+      </div>
 
-      <el-col :span="6">
-        <el-card shadow="hover" class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon" style="background: #f56c6c">
-              <el-icon size="32"><WarningFilled /></el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-value">{{ stats.alarm_count }}</div>
-              <div class="stat-label">异常设备</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+      <div class="kpi-card clickable" @click="router.push('/devices')">
+        <div class="kpi-icon" style="background: rgba(255, 59, 48, 0.1)">
+          <el-icon size="24" color="#FF3B30"><WarningFilled /></el-icon>
+        </div>
+        <div class="kpi-content">
+          <div class="kpi-value">{{ stats.alarm_count }}</div>
+          <div class="kpi-label">异常设备</div>
+          <div class="kpi-detail">点击查看详情</div>
+        </div>
+      </div>
+    </div>
 
-    <!-- Real-time Monitoring Cards (Dynamic) -->
-    <el-row :gutter="20" class="content-row">
-      <el-col :span="24">
-        <el-card class="monitoring-card">
-          <template #header>
-            <div class="card-header">
-              <span>实时监测数据</span>
-              <div class="header-right">
-                <!-- 演示数据注入按钮 -->
-                <el-button
-                  type="warning"
-                  size="small"
-                  :loading="demoInjectLoading"
-                  @click="injectDemoData"
-                  class="demo-inject-btn"
-                >
-                  <el-icon v-if="!demoInjectLoading"><Upload /></el-icon>
-                  注入演示数据
-                </el-button>
-                <el-divider direction="vertical" />
-                <div class="preset-buttons">
-                  <template v-for="preset in pollutantPresets" :key="preset.value">
-                    <!-- 带下拉菜单的按钮（重金属） -->
-                    <el-dropdown
-                      v-if="preset.hasSubmenu"
-                      trigger="click"
-                      @command="(cmd: string) => { onPresetChange(preset.value); onHeavyMetalFilterChange(cmd === 'all' ? null : cmd === 'class1' ? 'heavy_metals_class1' : 'heavy_metals_class2'); }"
-                    >
-                      <el-button
-                        :type="selectedPreset === preset.value ? 'primary' : 'default'"
-                        size="small"
-                        class="preset-dropdown-btn"
-                      >
-                        {{ preset.label }}
-                        <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-                      </el-button>
-                      <template #dropdown>
-                        <el-dropdown-menu>
-                          <el-dropdown-item
-                            v-for="sub in preset.submenu"
-                            :key="sub.value"
-                            :command="sub.value"
-                          >
-                            <span :class="{ 'active-filter': selectedPreset === preset.value && (sub.filter === heavyMetalFilter || (sub.value === 'all' && !heavyMetalFilter)) }">
-                              {{ sub.label }}
-                            </span>
-                          </el-dropdown-item>
-                        </el-dropdown-menu>
-                      </template>
-                    </el-dropdown>
-                    <!-- 普通按钮 -->
-                    <el-button
-                      v-else
-                      :type="selectedPreset === preset.value ? 'primary' : 'default'"
-                      size="small"
-                      @click="onPresetChange(preset.value)"
-                    >
-                      {{ preset.label }}
-                    </el-button>
-                  </template>
-                </div>
-              </div>
-            </div>
-            <!-- 重金属子分类标签（选中重金属预设时显示） -->
-            <div v-if="selectedPreset === 'heavy_metals'" class="sub-filter-tags">
-              <el-tag
-                v-for="sub in pollutantPresets.find(p => p.value === 'heavy_metals')?.submenu"
-                :key="sub.value"
-                :type="(sub.filter === heavyMetalFilter || (sub.value === 'all' && !heavyMetalFilter)) ? '' : 'info'"
-                :effect="(sub.filter === heavyMetalFilter || (sub.value === 'all' && !heavyMetalFilter)) ? 'dark' : 'plain'"
-                class="sub-tag"
-                @click="onHeavyMetalFilterChange(sub.value === 'all' ? null : sub.filter)"
-              >
-                {{ sub.label }}
-              </el-tag>
-              <span class="filter-hint">
-                当前显示 {{ filteredActivePollutants.length }} 项
-              </span>
-            </div>
-          </template>
-          <!-- 有数据时显示卡片 -->
-          <el-row v-if="monitoringCards.length > 0" :gutter="16">
-            <el-col
-              v-for="card in monitoringCards"
-              :key="card.code"
-              :span="6"
-              :xs="12"
-              :sm="8"
-              :md="6"
-            >
-              <div
-                class="pollutant-card"
-                :class="{ 'heavy-metal': card.isHeavyMetal }"
-                :style="{ borderLeftColor: card.color }"
-              >
-                <div class="pollutant-header">
-                  <span class="pollutant-name">{{ card.name }}</span>
-                  <el-tag
-                    :type="card.flag === 'N' ? 'success' : 'warning'"
-                    size="small"
-                    class="flag-tag"
-                  >
-                    {{ card.flag }}
-                  </el-tag>
-                </div>
-                <div class="pollutant-value" :style="{ color: card.color }">
-                  <template v-if="card.value !== undefined">
-                    {{ card.value.toFixed(card.precision) }}
-                  </template>
-                  <template v-else>
-                    --
-                  </template>
-                  <span class="pollutant-unit">{{ card.unit }}</span>
-                </div>
-                <div class="pollutant-code">{{ card.code }}</div>
-              </div>
-            </el-col>
-          </el-row>
-          <!-- 展开/收起按钮 -->
-          <div v-if="showExpandButton" class="expand-button-container">
+    <!-- Real-time Monitoring Cards -->
+    <el-card class="monitoring-card">
+      <template #header>
+        <div class="card-header">
+          <span class="card-title">实时监测数据</span>
+          <div class="header-right">
             <el-button
-              type="primary"
-              link
-              @click="toggleExpand"
-              class="expand-btn"
+              type="warning"
+              size="small"
+              :loading="demoInjectLoading"
+              @click="injectDemoData"
+              round
             >
-              <template v-if="isExpanded">
-                <el-icon><ArrowUp /></el-icon>
-                收起
+              <el-icon v-if="!demoInjectLoading"><Upload /></el-icon>
+              注入演示数据
+            </el-button>
+            <el-divider direction="vertical" />
+            <div class="preset-buttons">
+              <template v-for="preset in pollutantPresets" :key="preset.value">
+                <el-dropdown
+                  v-if="preset.hasSubmenu"
+                  trigger="click"
+                  @command="(cmd: string) => { onPresetChange(preset.value); onHeavyMetalFilterChange(cmd === 'all' ? null : cmd === 'class1' ? 'heavy_metals_class1' : 'heavy_metals_class2'); }"
+                >
+                  <el-button
+                    :type="selectedPreset === preset.value ? 'primary' : 'default'"
+                    size="small"
+                    round
+                  >
+                    {{ preset.label }}
+                    <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item
+                        v-for="sub in preset.submenu"
+                        :key="sub.value"
+                        :command="sub.value"
+                      >
+                        <span :class="{ 'active-filter': selectedPreset === preset.value && (sub.filter === heavyMetalFilter || (sub.value === 'all' && !heavyMetalFilter)) }">
+                          {{ sub.label }}
+                        </span>
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+                <el-button
+                  v-else
+                  :type="selectedPreset === preset.value ? 'primary' : 'default'"
+                  size="small"
+                  round
+                  @click="onPresetChange(preset.value)"
+                >
+                  {{ preset.label }}
+                </el-button>
+              </template>
+            </div>
+          </div>
+        </div>
+        <!-- Heavy metal sub-filter tags -->
+        <div v-if="selectedPreset === 'heavy_metals'" class="sub-filter-tags">
+          <el-tag
+            v-for="sub in pollutantPresets.find(p => p.value === 'heavy_metals')?.submenu"
+            :key="sub.value"
+            :type="(sub.filter === heavyMetalFilter || (sub.value === 'all' && !heavyMetalFilter)) ? '' : 'info'"
+            :effect="(sub.filter === heavyMetalFilter || (sub.value === 'all' && !heavyMetalFilter)) ? 'dark' : 'plain'"
+            class="sub-tag"
+            @click="onHeavyMetalFilterChange(sub.value === 'all' ? null : sub.filter)"
+          >
+            {{ sub.label }}
+          </el-tag>
+          <span class="filter-hint">
+            当前显示 {{ filteredActivePollutants.length }} 项
+          </span>
+        </div>
+      </template>
+
+      <!-- Pollutant cards -->
+      <div v-if="monitoringCards.length > 0" class="pollutant-grid">
+        <div
+          v-for="card in monitoringCards"
+          :key="card.code"
+          class="pollutant-card"
+          :class="{ 'heavy-metal': card.isHeavyMetal }"
+        >
+          <div class="pollutant-icon" :style="{ background: `${card.color}15` }">
+            <div class="icon-dot" :style="{ background: card.color }"></div>
+          </div>
+          <div class="pollutant-info">
+            <div class="pollutant-header">
+              <span class="pollutant-name">{{ card.name }}</span>
+              <el-tag
+                :type="card.flag === 'N' ? 'success' : 'warning'"
+                size="small"
+                round
+              >
+                {{ card.flag }}
+              </el-tag>
+            </div>
+            <div class="pollutant-value">
+              <template v-if="card.value !== undefined">
+                <span class="value" :style="{ color: card.color }">{{ card.value.toFixed(card.precision) }}</span>
+                <span class="unit">{{ card.unit }}</span>
               </template>
               <template v-else>
-                <el-icon><ArrowDown /></el-icon>
-                展开更多 ({{ remainingCount }})
+                <span class="value no-data">--</span>
               </template>
-            </el-button>
+            </div>
+            <div class="pollutant-code">{{ card.code }}</div>
           </div>
-          <!-- 无数据时显示提示 -->
-          <div v-else-if="monitoringCards.length === 0" class="no-data-hint">
-            <el-empty description="暂无监测数据">
-              <template #description>
-                <p>当前设备尚未上报数据</p>
-                <p class="hint-text">数据将在设备数采仪上报后自动显示</p>
-              </template>
-            </el-empty>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+        </div>
+      </div>
+
+      <!-- Expand button -->
+      <div v-if="showExpandButton" class="expand-container">
+        <el-button type="primary" link @click="toggleExpand">
+          <template v-if="isExpanded">
+            <el-icon><ArrowUp /></el-icon>
+            收起
+          </template>
+          <template v-else>
+            <el-icon><ArrowDown /></el-icon>
+            展开更多 ({{ remainingCount }})
+          </template>
+        </el-button>
+      </div>
+
+      <!-- No data hint -->
+      <div v-else-if="monitoringCards.length === 0" class="no-data-hint">
+        <el-empty description="暂无监测数据">
+          <template #description>
+            <p>当前设备尚未上报数据</p>
+            <p class="hint-text">数据将在设备数采仪上报后自动显示</p>
+          </template>
+        </el-empty>
+      </div>
+    </el-card>
 
     <!-- Device Map -->
-    <el-row :gutter="20" class="content-row">
-      <el-col :span="24">
-        <el-card class="map-card">
-          <template #header>
-            <div class="card-header">
-              <span>设备分布地图</span>
-              <el-tag type="info" size="small">{{ devices.length }} 台设备</el-tag>
-            </div>
-          </template>
-          <DeviceMap
-            :devices="devices"
-            :loading="loading"
-            height="400px"
-            @device-click="handleDeviceClick"
-          />
-        </el-card>
-      </el-col>
-    </el-row>
+    <el-card class="map-card">
+      <template #header>
+        <div class="card-header">
+          <span class="card-title">设备分布地图</span>
+          <el-tag type="info" size="small" round>{{ devices.length }} 台设备</el-tag>
+        </div>
+      </template>
+      <DeviceMap
+        :devices="devices"
+        :loading="loading"
+        height="400px"
+        @device-click="handleDeviceClick"
+      />
+    </el-card>
 
     <!-- Charts -->
-    <el-row :gutter="20" class="content-row">
-      <el-col :span="24">
-        <el-card class="chart-card">
-          <template #header>
-            <div class="card-header">
-              <div class="header-left">
-                <span>{{ currentPollutantMeta.label }} 实时趋势 + AI预测</span>
-                <el-tag v-if="predictionData?.model_type" type="success" size="small" class="model-tag">
-                  {{
-                    predictionData.model_type === 'prophet'
-                      ? 'Prophet预测'
-                      : predictionData.model_type === 'neuralprophet'
-                        ? 'NeuralProphet预测'
-                        : predictionData.model_type === 'simple_average'
-                          ? '朴素预测'
-                          : '数据不足'
-                  }}
-                </el-tag>
-              </div>
-              <div class="header-right">
-                <el-select
-                  v-model="selectedDeviceForPrediction"
-                  placeholder="选择设备"
-                  size="small"
-                  style="width: 180px; margin-right: 10px;"
-                  @change="onDeviceChange"
-                  :loading="predictionLoading"
-                >
-                  <el-option
-                    v-for="device in devices"
-                    :key="device.id"
-                    :label="device.name || device.mn"
-                    :value="device.mn"
-                  />
-                </el-select>
-                <el-select
-                  v-model="selectedPollutant"
-                  placeholder="监测因子"
-                  size="small"
-                  style="width: 200px; margin-right: 10px;"
-                  @change="onPollutantChange"
-                  filterable
-                >
-                  <el-option-group
-                    v-for="group in groupedPollutantOptions"
-                    :key="group.label"
-                    :label="group.label"
-                  >
-                    <el-option
-                      v-for="option in group.options"
-                      :key="option.value"
-                      :label="option.label"
-                      :value="option.value"
-                    />
-                  </el-option-group>
-                </el-select>
-                <el-button
-                  type="primary"
-                  :icon="Refresh"
-                  circle
-                  size="small"
-                  @click="loadData"
-                  :loading="loading"
+    <el-card class="chart-card">
+      <template #header>
+        <div class="card-header">
+          <div class="header-left">
+            <span class="card-title">{{ currentPollutantMeta.label }} 实时趋势 + AI预测</span>
+            <el-tag v-if="predictionData?.model_type" type="success" size="small" round>
+              {{
+                predictionData.model_type === 'prophet'
+                  ? 'Prophet预测'
+                  : predictionData.model_type === 'neuralprophet'
+                    ? 'NeuralProphet预测'
+                    : predictionData.model_type === 'simple_average'
+                      ? '朴素预测'
+                      : '数据不足'
+              }}
+            </el-tag>
+          </div>
+          <div class="header-right">
+            <el-select
+              v-model="selectedDeviceForPrediction"
+              placeholder="选择设备"
+              size="small"
+              style="width: 180px; margin-right: 10px;"
+              @change="onDeviceChange"
+              :loading="predictionLoading"
+            >
+              <el-option
+                v-for="device in devices"
+                :key="device.id"
+                :label="device.name || device.mn"
+                :value="device.mn"
+              />
+            </el-select>
+            <el-select
+              v-model="selectedPollutant"
+              placeholder="监测因子"
+              size="small"
+              style="width: 200px; margin-right: 10px;"
+              @change="onPollutantChange"
+              filterable
+            >
+              <el-option-group
+                v-for="group in groupedPollutantOptions"
+                :key="group.label"
+                :label="group.label"
+              >
+                <el-option
+                  v-for="option in group.options"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
                 />
-              </div>
-            </div>
-          </template>
-          <div id="trend-chart" style="height: 400px"></div>
-          <div v-if="predictionData && predictionData.predictions.length > 0" class="prediction-info">
-            <el-tag type="info" size="small">
-              预测时间范围: 未来 {{ predictionData.predictions.length * 15 }} 分钟
-            </el-tag>
-            <el-tag v-if="predictionData.metrics?.interval_width" type="success" size="small">
-              置信区间: {{ (predictionData.metrics.interval_width * 100).toFixed(0) }}%
-            </el-tag>
-            <el-tag v-if="predictionData.metrics?.data_points" type="warning" size="small">
-              训练数据: {{ predictionData.metrics.data_points }} 点
-            </el-tag>
+              </el-option-group>
+            </el-select>
+            <el-button
+              type="primary"
+              :icon="Refresh"
+              circle
+              size="small"
+              @click="loadData"
+              :loading="loading"
+            />
           </div>
-          <div v-if="trendData.length === 0 && !loading" class="no-data">
-            暂无监测数据
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+        </div>
+      </template>
+      <div id="trend-chart" style="height: 400px"></div>
+      <div v-if="predictionData && predictionData.predictions.length > 0" class="prediction-info">
+        <el-tag type="info" size="small" round>
+          预测时间范围: 未来 {{ predictionData.predictions.length * 15 }} 分钟
+        </el-tag>
+        <el-tag v-if="predictionData.metrics?.interval_width" type="success" size="small" round>
+          置信区间: {{ (predictionData.metrics.interval_width * 100).toFixed(0) }}%
+        </el-tag>
+        <el-tag v-if="predictionData.metrics?.data_points" type="warning" size="small" round>
+          训练数据: {{ predictionData.metrics.data_points }} 点
+        </el-tag>
+      </div>
+      <div v-if="trendData.length === 0 && !loading" class="no-data">
+        暂无监测数据
+      </div>
+    </el-card>
 
-    <!-- AI Analysis Card - Comprehensive Analysis Mode (analyzes all pollutants) -->
-    <el-row :gutter="20" class="content-row">
-      <el-col :span="24">
-        <AiAnalysisCard
-          :device-id="selectedDeviceForPrediction"
-          :device-name="selectedDeviceName"
-        />
-        <!-- Note: Not passing pollutant prop enables comprehensive analysis of ALL pollutants -->
-      </el-col>
-    </el-row>
+    <!-- AI Analysis Card -->
+    <AiAnalysisCard
+      :device-id="selectedDeviceForPrediction"
+      :device-name="selectedDeviceName"
+    />
 
     <!-- Data table -->
-    <el-row :gutter="20" class="content-row">
-      <el-col :span="24">
-        <el-card class="data-card">
-          <template #header>
-            <span>最新监测数据</span>
+    <el-card class="data-card">
+      <template #header>
+        <span class="card-title">最新监测数据</span>
+      </template>
+      <el-table :data="trendData.slice(0, 10)" style="width: 100%" size="small">
+        <el-table-column prop="device_id" label="设备ID" width="150" />
+        <el-table-column prop="pollutant_code" label="污染物" width="150">
+          <template #default="{ row }">
+            <span>{{ getPollutantName(row.pollutant_code) }}</span>
+            <span class="code-hint">({{ row.pollutant_code }})</span>
           </template>
-          <el-table :data="trendData.slice(0, 10)" style="width: 100%" size="small">
-            <el-table-column prop="device_id" label="设备ID" width="150" />
-            <el-table-column prop="pollutant_code" label="污染物" width="150">
-              <template #default="{ row }">
-                <span>{{ getPollutantName(row.pollutant_code) }}</span>
-                <span class="code-hint">({{ row.pollutant_code }})</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="value" label="监测值" width="140">
-              <template #default="{ row }">
-                <span :class="{ 'heavy-metal-value': isHeavyMetal(row.pollutant_code) }">
-                  {{ formatPollutantValue(row.pollutant_code, row.value) }}
-                  <span class="value-unit">{{ getPollutantUnit(row.pollutant_code) }}</span>
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="flag" label="标记" width="80">
-              <template #default="{ row }">
-                <el-tag :type="row.flag === 'N' ? 'success' : 'warning'" size="small">
-                  {{ row.flag }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="ts" label="时间">
-              <template #default="{ row }">
-                {{ new Date(row.ts).toLocaleString('zh-CN') }}
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-      </el-col>
-    </el-row>
+        </el-table-column>
+        <el-table-column prop="value" label="监测值" width="140">
+          <template #default="{ row }">
+            <span :class="{ 'heavy-metal-value': isHeavyMetal(row.pollutant_code) }">
+              {{ formatPollutantValue(row.pollutant_code, row.value) }}
+              <span class="value-unit">{{ getPollutantUnit(row.pollutant_code) }}</span>
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="flag" label="标记" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.flag === 'N' ? 'success' : 'warning'" size="small" round>
+              {{ row.flag }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="ts" label="时间">
+          <template #default="{ row }">
+            {{ new Date(row.ts).toLocaleString('zh-CN') }}
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
   </div>
 </template>
 
@@ -1141,251 +1166,312 @@ export default {
 
 <style scoped>
 .dashboard {
-  padding: 0;
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
 }
 
 .error-alert {
-  margin-bottom: 20px;
+  border-radius: var(--radius-lg);
 }
 
-.stats-row {
-  margin-bottom: 20px;
+/* KPI Cards Grid */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-lg);
 }
 
-.stat-card {
-  .stat-content {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }
-
-  .stat-icon {
-    width: 64px;
-    height: 64px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-  }
-
-  .stat-value {
-    font-size: 28px;
-    font-weight: bold;
-    color: #333;
-  }
-
-  .stat-label {
-    color: #999;
-    font-size: 14px;
-  }
-
-  .stat-footer {
-    margin-top: 16px;
-    padding-top: 12px;
-    border-top: 1px solid #eee;
-    display: flex;
-    gap: 16px;
-    font-size: 12px;
-
-    .online {
-      color: #67c23a;
-    }
-
-    .offline {
-      color: #909399;
-    }
+@media (max-width: 1200px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
-.content-row {
-  margin-bottom: 20px;
+@media (max-width: 768px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
-/* Real-time Monitoring Cards */
-.monitoring-card {
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
+.kpi-card {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-xl);
+  padding: var(--space-lg);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  transition: transform var(--transition-normal), box-shadow var(--transition-normal);
+}
 
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
+.kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
 
-  .demo-inject-btn {
-    .el-icon {
-      margin-right: 4px;
-    }
-  }
+.kpi-card.clickable {
+  cursor: pointer;
+}
 
-  .preset-buttons {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
+.kpi-card.clickable:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-xl);
+}
 
-  .preset-dropdown-btn {
-    .el-icon--right {
-      margin-left: 4px;
-    }
-  }
+.kpi-card.clickable:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-md);
+}
 
-  .sub-filter-tags {
-    margin-top: 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+.kpi-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
 
-    .sub-tag {
-      cursor: pointer;
-      transition: all 0.2s;
+.kpi-content {
+  flex: 1;
+  min-width: 0;
+}
 
-      &:hover {
-        transform: scale(1.05);
-      }
-    }
+.kpi-value {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
 
-    .filter-hint {
-      color: #909399;
-      font-size: 12px;
-      margin-left: 8px;
-    }
-  }
+.kpi-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin-top: 4px;
+}
+
+.kpi-detail {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 8px;
+}
+
+.kpi-detail .online {
+  color: #34C759;
+}
+
+.kpi-detail .offline {
+  color: var(--color-text-tertiary);
+}
+
+.kpi-detail .divider {
+  margin: 0 6px;
+  color: var(--color-text-tertiary);
+}
+
+/* Card Headers */
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.card-title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.preset-buttons {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+/* Sub filter tags */
+.sub-filter-tags {
+  margin-top: var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.sub-tag {
+  cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+
+.sub-tag:hover {
+  transform: scale(1.05);
+}
+
+.filter-hint {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  margin-left: var(--space-sm);
 }
 
 .active-filter {
-  color: #409eff;
-  font-weight: 500;
+  color: var(--color-accent-blue);
+  font-weight: 600;
 }
 
-.expand-button-container {
-  text-align: center;
-  padding: 16px 0 8px;
-  border-top: 1px dashed #eee;
-  margin-top: 8px;
+/* Pollutant Cards Grid */
+.pollutant-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-md);
+}
 
-  .expand-btn {
-    font-size: 14px;
+@media (max-width: 1400px) {
+  .pollutant-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
 
-    .el-icon {
-      margin-right: 4px;
-    }
+@media (max-width: 1000px) {
+  .pollutant-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .pollutant-grid {
+    grid-template-columns: 1fr;
   }
 }
 
 .pollutant-card {
-  background: #fafafa;
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 16px;
-  border-left: 4px solid #409eff;
-  transition: all 0.3s;
-
-  &:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    transform: translateY(-2px);
-  }
-
-  &.heavy-metal {
-    background: linear-gradient(135deg, #f5f0ff 0%, #fff 100%);
-  }
-
-  .pollutant-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-  }
-
-  .pollutant-name {
-    font-size: 14px;
-    font-weight: 500;
-    color: #333;
-  }
-
-  .flag-tag {
-    font-size: 10px;
-  }
-
-  .pollutant-value {
-    font-size: 24px;
-    font-weight: bold;
-    margin-bottom: 4px;
-  }
-
-  .pollutant-unit {
-    font-size: 12px;
-    font-weight: normal;
-    color: #909399;
-    margin-left: 4px;
-  }
-
-  .pollutant-code {
-    font-size: 11px;
-    color: #909399;
-  }
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  transition: all var(--transition-normal);
 }
 
-.map-card {
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
+.pollutant-card:hover {
+  background: #EAEAEF;
+  transform: translateY(-2px);
 }
 
+.pollutant-card.heavy-metal {
+  background: linear-gradient(135deg, rgba(175, 82, 222, 0.08) 0%, var(--color-bg-tertiary) 100%);
+}
+
+.pollutant-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.icon-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.pollutant-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.pollutant-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.pollutant-name {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pollutant-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.pollutant-value .value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.pollutant-value .value.no-data {
+  color: var(--color-text-tertiary);
+}
+
+.pollutant-value .unit {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.pollutant-code {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 4px;
+}
+
+/* Expand container */
+.expand-container {
+  text-align: center;
+  padding-top: var(--space-md);
+  border-top: 1px dashed rgba(0, 0, 0, 0.06);
+  margin-top: var(--space-md);
+}
+
+/* No data hint */
+.no-data-hint {
+  padding: var(--space-xl) 0;
+  text-align: center;
+}
+
+.no-data-hint .hint-text {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  margin-top: var(--space-sm);
+}
+
+/* Chart card */
 .chart-card {
-  min-height: 480px;
-
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-
-    .header-left {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .header-right {
-      display: flex;
-      align-items: center;
-    }
-
-    .model-tag {
-      font-size: 11px;
-    }
-  }
-
-  .prediction-info {
-    display: flex;
-    gap: 10px;
-    padding: 10px 0;
-    justify-content: center;
-  }
+  min-height: 500px;
 }
 
-.data-card {
-  .code-hint {
-    color: #909399;
-    font-size: 11px;
-    margin-left: 4px;
-  }
-
-  .heavy-metal-value {
-    color: #8B5CF6;
-  }
-
-  .value-unit {
-    margin-left: 4px;
-    color: #909399;
-    font-size: 12px;
-  }
+.prediction-info {
+  display: flex;
+  gap: var(--space-sm);
+  padding: var(--space-md) 0;
+  justify-content: center;
 }
 
 .no-data {
@@ -1393,23 +1479,93 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #999;
-  font-size: 14px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-base);
 }
 
-.no-data-hint {
-  padding: 40px 0;
-  text-align: center;
-
-  .hint-text {
-    color: #909399;
-    font-size: 12px;
-    margin-top: 8px;
-  }
+/* Data table */
+.data-card .code-hint {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  margin-left: 4px;
 }
 
-:deep(.el-card__header) {
-  padding: 12px 20px;
-  border-bottom: 1px solid #eee;
+.data-card .heavy-metal-value {
+  color: #AF52DE;
+}
+
+.data-card .value-unit {
+  margin-left: 4px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+/* 统一按钮样式 - 深蓝色 #0B1727 */
+:deep(.el-button--primary) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+}
+
+:deep(.el-button--primary:hover),
+:deep(.el-button--primary:focus) {
+  background-color: #162a3d !important;
+  border-color: #162a3d !important;
+}
+
+:deep(.el-button--primary:active) {
+  background-color: #0a1320 !important;
+  border-color: #0a1320 !important;
+}
+
+:deep(.el-button--warning) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+  color: #fff !important;
+}
+
+:deep(.el-button--warning:hover),
+:deep(.el-button--warning:focus) {
+  background-color: #162a3d !important;
+  border-color: #162a3d !important;
+}
+
+:deep(.el-button--default) {
+  border-color: #dcdfe6 !important;
+  color: #606266 !important;
+  background-color: #fff !important;
+}
+
+:deep(.el-button--default:hover),
+:deep(.el-button--default:focus) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.06) !important;
+}
+
+:deep(.el-button--default:active) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.1) !important;
+}
+
+/* 圆形刷新按钮 */
+:deep(.el-button.is-circle.el-button--primary) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+}
+
+:deep(.el-button.is-circle.el-button--primary:hover) {
+  background-color: #162a3d !important;
+  border-color: #162a3d !important;
+}
+
+/* link 类型按钮 */
+:deep(.el-button--primary.is-link) {
+  color: #0B1727 !important;
+  background: transparent !important;
+}
+
+:deep(.el-button--primary.is-link:hover) {
+  color: #162a3d !important;
 }
 </style>

@@ -203,12 +203,12 @@ onMounted(loadAlarms)
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'pending'"
               type="primary"
-              link
+              size="small"
               @click="handleAcknowledge(row)"
             >
               确认
@@ -216,12 +216,12 @@ onMounted(loadAlarms)
             <el-button
               v-if="row.status !== 'resolved'"
               type="success"
-              link
+              size="small"
               @click="handleResolve(row)"
             >
               解决
             </el-button>
-            <el-button type="danger" link @click="handleDelete(row)">
+            <el-button type="danger" size="small" @click="handleDelete(row)">
               删除
             </el-button>
           </template>
@@ -242,5 +242,85 @@ onMounted(loadAlarms)
   display: flex;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+/* 确认按钮 - 深蓝色 #0B1727 */
+:deep(.el-button--primary) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+  color: #fff !important;
+}
+
+:deep(.el-button--primary:hover),
+:deep(.el-button--primary:focus) {
+  background-color: #162a3d !important;
+  border-color: #162a3d !important;
+}
+
+:deep(.el-button--primary:active) {
+  background-color: #0a1320 !important;
+  border-color: #0a1320 !important;
+}
+
+/* 解决按钮 - 深绿色 */
+:deep(.el-button--success) {
+  background-color: #1D6F42 !important;
+  border-color: #1D6F42 !important;
+  color: #fff !important;
+}
+
+:deep(.el-button--success:hover),
+:deep(.el-button--success:focus) {
+  background-color: #258B52 !important;
+  border-color: #258B52 !important;
+}
+
+:deep(.el-button--success:active) {
+  background-color: #185A36 !important;
+  border-color: #185A36 !important;
+}
+
+/* 删除按钮 - 深红色 */
+:deep(.el-button--danger) {
+  background-color: #C41E3A !important;
+  border-color: #C41E3A !important;
+  color: #fff !important;
+}
+
+:deep(.el-button--danger:hover),
+:deep(.el-button--danger:focus) {
+  background-color: #D63850 !important;
+  border-color: #D63850 !important;
+}
+
+:deep(.el-button--danger:active) {
+  background-color: #A31830 !important;
+  border-color: #A31830 !important;
+}
+
+/* 刷新按钮（默认按钮） - 悬停深蓝色 */
+:deep(.el-button--default),
+:deep(.el-button--default:not(:hover)) {
+  border-color: #dcdfe6 !important;
+  color: #606266 !important;
+  background-color: #fff !important;
+}
+
+:deep(.el-button--default:hover) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.06) !important;
+}
+
+:deep(.el-button--default:active) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.1) !important;
+}
+
+:deep(.el-button--default:focus:not(:hover)) {
+  border-color: #dcdfe6 !important;
+  color: #606266 !important;
+  background-color: #fff !important;
 }
 </style>

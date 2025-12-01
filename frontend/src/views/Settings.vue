@@ -118,4 +118,22 @@ const handlePasswordChange = () => {
 .settings-page {
   max-width: 1200px;
 }
+
+/* 主按钮 - 深蓝色 #0B1727 */
+:deep(.el-button--primary) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+  color: #fff !important;
+}
+
+:deep(.el-button--primary:hover),
+:deep(.el-button--primary:focus) {
+  background-color: #162a3d !important;
+  border-color: #162a3d !important;
+}
+
+:deep(.el-button--primary:active) {
+  background-color: #0a1320 !important;
+  border-color: #0a1320 !important;
+}
 </style>

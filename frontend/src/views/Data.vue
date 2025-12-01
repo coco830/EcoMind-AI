@@ -258,4 +258,56 @@ onUnmounted(() => {
 .table-card {
   width: 100%;
 }
+
+/* 统一按钮样式 - 深蓝色 #0B1727 */
+:deep(.el-button--primary) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+}
+
+:deep(.el-button--primary:hover),
+:deep(.el-button--primary:focus) {
+  background-color: #162a3d !important;
+  border-color: #162a3d !important;
+}
+
+:deep(.el-button--primary:active) {
+  background-color: #0a1320 !important;
+  border-color: #0a1320 !important;
+}
+
+/* 默认按钮（导出按钮等） */
+:deep(.el-button--default),
+:deep(.el-dropdown__caret-button),
+:deep(.el-dropdown .el-button),
+:deep(.el-button--default:not(:hover)),
+:deep(.el-dropdown .el-button:not(:hover)) {
+  border-color: #dcdfe6 !important;
+  color: #606266 !important;
+  background-color: #fff !important;
+}
+
+:deep(.el-button--default:hover),
+:deep(.el-dropdown__caret-button:hover),
+:deep(.el-dropdown .el-button:hover) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.06) !important;
+}
+
+:deep(.el-button--default:active),
+:deep(.el-dropdown__caret-button:active),
+:deep(.el-dropdown .el-button:active) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.1) !important;
+}
+
+/* 确保 focus 状态不会持续 */
+:deep(.el-button--default:focus:not(:hover)),
+:deep(.el-dropdown .el-button:focus:not(:hover)) {
+  border-color: #dcdfe6 !important;
+  color: #606266 !important;
+  background-color: #fff !important;
+}
 </style>

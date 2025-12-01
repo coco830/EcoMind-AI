@@ -3,12 +3,11 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { authApi } from '@/api/auth'
 import { ElMessage } from 'element-plus'
-import type { FormInstance, FormRules } from 'element-plus'
 
 const router = useRouter()
-
-const formRef = ref<FormInstance>()
 const loading = ref(false)
+const showPassword = ref(false)
+const showConfirmPassword = ref(false)
 
 const form = reactive({
   username: '',
@@ -18,48 +17,82 @@ const form = reactive({
   full_name: ''
 })
 
-const validateConfirmPassword = (_rule: any, value: string, callback: any) => {
-  if (value !== form.password) {
-    callback(new Error('两次输入的密码不一致'))
-  } else {
-    callback()
-  }
-}
+const errors = reactive({
+  username: '',
+  email: '',
+  password: '',
+  confirmPassword: '',
+  full_name: ''
+})
 
-const rules: FormRules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 64, message: '用户名长度 3-64 个字符', trigger: 'blur' },
-    { pattern: /^[a-zA-Z0-9_]+$/, message: '用户名只能包含字母、数字和下划线', trigger: 'blur' }
-  ],
-  email: [
-    { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '请输入有效的邮箱地址', trigger: 'blur' }
-  ],
-  password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 8, max: 128, message: '密码长度 8-128 个字符', trigger: 'blur' }
-  ],
-  confirmPassword: [
-    { required: true, message: '请确认密码', trigger: 'blur' },
-    { validator: validateConfirmPassword, trigger: 'blur' }
-  ],
-  full_name: [
-    { max: 128, message: '姓名长度不能超过 128 个字符', trigger: 'blur' }
-  ]
+const validateForm = (): boolean => {
+  let isValid = true
+
+  // Reset errors
+  errors.username = ''
+  errors.email = ''
+  errors.password = ''
+  errors.confirmPassword = ''
+  errors.full_name = ''
+
+  // Username validation
+  if (!form.username.trim()) {
+    errors.username = '请输入用户名'
+    isValid = false
+  } else if (form.username.length < 3 || form.username.length > 64) {
+    errors.username = '用户名长度 3-64 个字符'
+    isValid = false
+  } else if (!/^[a-zA-Z0-9_]+$/.test(form.username)) {
+    errors.username = '仅限字母、数字和下划线'
+    isValid = false
+  }
+
+  // Email validation
+  if (!form.email.trim()) {
+    errors.email = '请输入邮箱'
+    isValid = false
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+    errors.email = '请输入有效的邮箱地址'
+    isValid = false
+  }
+
+  // Password validation
+  if (!form.password) {
+    errors.password = '请输入密码'
+    isValid = false
+  } else if (form.password.length < 8) {
+    errors.password = '密码至少8个字符'
+    isValid = false
+  }
+
+  // Confirm password validation
+  if (!form.confirmPassword) {
+    errors.confirmPassword = '请确认密码'
+    isValid = false
+  } else if (form.confirmPassword !== form.password) {
+    errors.confirmPassword = '两次密码不一致'
+    isValid = false
+  }
+
+  // Full name validation (optional)
+  if (form.full_name && form.full_name.length > 128) {
+    errors.full_name = '姓名不能超过128个字符'
+    isValid = false
+  }
+
+  return isValid
 }
 
 const handleRegister = async () => {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
+  if (!validateForm()) return
 
   loading.value = true
   try {
     await authApi.register({
-      username: form.username,
-      email: form.email,
+      username: form.username.trim(),
+      email: form.email.trim(),
       password: form.password,
-      full_name: form.full_name || undefined
+      full_name: form.full_name.trim() || undefined
     })
 
     ElMessage.success('注册成功！请登录')
@@ -69,7 +102,6 @@ const handleRegister = async () => {
     if (typeof message === 'string') {
       ElMessage.error(message)
     } else if (Array.isArray(message)) {
-      // 处理验证错误数组
       const firstError = message[0]
       ElMessage.error(firstError?.msg || '注册失败，请检查输入')
     } else {
@@ -86,156 +118,270 @@ const goToLogin = () => {
 </script>
 
 <template>
-  <div class="register-container">
-    <div class="register-card">
-      <div class="register-header">
-        <img src="/vite.svg" alt="Logo" class="logo" />
-        <h1 class="title">EcoMind-AI</h1>
-        <p class="subtitle">智慧环保SaaS平台 - 用户注册</p>
+  <div class="min-h-screen bg-[#F5F5F7] flex items-center justify-center p-6 font-sans">
+    <!-- Subtle background pattern -->
+    <div class="fixed inset-0 opacity-[0.015]" style="background-image: url('data:image/svg+xml,%3Csvg width=&quot;60&quot; height=&quot;60&quot; viewBox=&quot;0 0 60 60&quot; xmlns=&quot;http://www.w3.org/2000/svg&quot;%3E%3Cg fill=&quot;none&quot; fill-rule=&quot;evenodd&quot;%3E%3Cg fill=&quot;%23000000&quot; fill-opacity=&quot;1&quot;%3E%3Cpath d=&quot;M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z&quot;/%3E%3C/g%3E%3C/g%3E%3C/svg%3E');"></div>
+
+    <!-- Main Bento Container -->
+    <div class="relative w-full max-w-[520px]">
+
+      <!-- Floating Card -->
+      <div class="relative bg-white/80 backdrop-blur-2xl rounded-[32px] shadow-[0_12px_48px_rgba(0,0,0,0.08),0_4px_16px_rgba(0,0,0,0.04),0_1px_4px_rgba(0,0,0,0.02)] border border-black/[0.04] overflow-hidden">
+
+        <!-- Top accent line -->
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-24 h-1 bg-gradient-to-r from-transparent via-black/10 to-transparent rounded-full"></div>
+
+        <!-- Content -->
+        <div class="p-10 pt-12">
+
+          <!-- Header -->
+          <div class="text-center mb-10">
+            <!-- Logo -->
+            <div class="inline-flex items-center justify-center w-20 h-20 rounded-[24px] bg-gradient-to-br from-[#F8F9FA] to-[#E9ECEF] shadow-[0_6px_20px_rgba(0,0,0,0.06),0_2px_8px_rgba(0,0,0,0.04),inset_0_1px_1px_rgba(255,255,255,0.8)] mb-5">
+              <svg viewBox="0 0 89 95" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-11 h-11 text-[#1D1D1F]">
+                <g fill="currentColor">
+                  <path d="M51 14 L44 23 L38 34 L40 35 L49 20 L51 19 L55 23 L66 40 L70 50 L70 59 L67 65 L62 70 L56 73 L47 73 L46 75 L56 75 L63 72 L70 65 L72 60 L71 46 L66 36 Z" />
+                  <path d="M16 32 L15 33 L15 48 L18 55 L25 62 L35 65 L39 70 L38 64 L35 57 L31 51 L23 43 L25 42 L31 46 L38 53 L43 61 L44 59 L44 48 L43 46 L35 38 Z" />
+                  <path d="M65 53 L63 53 L61 60 L54 66 L55 67 L59 66 L62 63 L65 58 Z" />
+                </g>
+              </svg>
+            </div>
+
+            <h1 class="text-[28px] font-semibold text-[#1D1D1F] tracking-tight mb-2">
+              创建账户
+            </h1>
+            <p class="text-[15px] text-[#86868B]">
+              加入 YueenEcoMind-AI 智慧环保平台
+            </p>
+          </div>
+
+          <!-- Form -->
+          <form @submit.prevent="handleRegister" class="space-y-5">
+
+            <!-- Username Field -->
+            <div class="space-y-2">
+              <label class="block text-[13px] font-medium text-[#1D1D1F] pl-1">
+                用户名
+              </label>
+              <div class="relative">
+                <input
+                  v-model="form.username"
+                  type="text"
+                  placeholder="3-64个字符，字母、数字、下划线"
+                  :class="[
+                    'w-full h-[52px] px-5 rounded-2xl text-[15px] text-[#1D1D1F] placeholder-[#AEAEB2]',
+                    'bg-[#F5F5F7] border-none outline-none',
+                    'transition-all duration-300 ease-out',
+                    'focus:bg-white focus:shadow-[0_0_0_4px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)]',
+                    errors.username ? 'ring-2 ring-red-400/50' : ''
+                  ]"
+                />
+                <span v-if="errors.username" class="absolute right-4 top-1/2 -translate-y-1/2 text-red-400 text-xs">
+                  {{ errors.username }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Email Field -->
+            <div class="space-y-2">
+              <label class="block text-[13px] font-medium text-[#1D1D1F] pl-1">
+                邮箱地址
+              </label>
+              <div class="relative">
+                <input
+                  v-model="form.email"
+                  type="email"
+                  placeholder="your@email.com"
+                  :class="[
+                    'w-full h-[52px] px-5 rounded-2xl text-[15px] text-[#1D1D1F] placeholder-[#AEAEB2]',
+                    'bg-[#F5F5F7] border-none outline-none',
+                    'transition-all duration-300 ease-out',
+                    'focus:bg-white focus:shadow-[0_0_0_4px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)]',
+                    errors.email ? 'ring-2 ring-red-400/50' : ''
+                  ]"
+                />
+                <span v-if="errors.email" class="absolute right-4 top-1/2 -translate-y-1/2 text-red-400 text-xs">
+                  {{ errors.email }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Full Name Field (Optional) -->
+            <div class="space-y-2">
+              <label class="block text-[13px] font-medium text-[#1D1D1F] pl-1">
+                真实姓名 <span class="text-[#AEAEB2] font-normal">（选填）</span>
+              </label>
+              <input
+                v-model="form.full_name"
+                type="text"
+                placeholder="您的姓名"
+                class="w-full h-[52px] px-5 rounded-2xl text-[15px] text-[#1D1D1F] placeholder-[#AEAEB2] bg-[#F5F5F7] border-none outline-none transition-all duration-300 ease-out focus:bg-white focus:shadow-[0_0_0_4px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)]"
+              />
+            </div>
+
+            <!-- Password Field -->
+            <div class="space-y-2">
+              <label class="block text-[13px] font-medium text-[#1D1D1F] pl-1">
+                密码
+              </label>
+              <div class="relative">
+                <input
+                  v-model="form.password"
+                  :type="showPassword ? 'text' : 'password'"
+                  placeholder="至少8个字符"
+                  :class="[
+                    'w-full h-[52px] px-5 pr-12 rounded-2xl text-[15px] text-[#1D1D1F] placeholder-[#AEAEB2]',
+                    'bg-[#F5F5F7] border-none outline-none',
+                    'transition-all duration-300 ease-out',
+                    'focus:bg-white focus:shadow-[0_0_0_4px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)]',
+                    errors.password ? 'ring-2 ring-red-400/50' : ''
+                  ]"
+                />
+                <button
+                  type="button"
+                  @click="showPassword = !showPassword"
+                  class="absolute right-4 top-1/2 -translate-y-1/2 text-[#AEAEB2] hover:text-[#86868B] transition-colors"
+                >
+                  <svg v-if="!showPassword" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                  </svg>
+                </button>
+                <span v-if="errors.password" class="absolute right-12 top-1/2 -translate-y-1/2 text-red-400 text-xs">
+                  {{ errors.password }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Confirm Password Field -->
+            <div class="space-y-2">
+              <label class="block text-[13px] font-medium text-[#1D1D1F] pl-1">
+                确认密码
+              </label>
+              <div class="relative">
+                <input
+                  v-model="form.confirmPassword"
+                  :type="showConfirmPassword ? 'text' : 'password'"
+                  placeholder="再次输入密码"
+                  @keyup.enter="handleRegister"
+                  :class="[
+                    'w-full h-[52px] px-5 pr-12 rounded-2xl text-[15px] text-[#1D1D1F] placeholder-[#AEAEB2]',
+                    'bg-[#F5F5F7] border-none outline-none',
+                    'transition-all duration-300 ease-out',
+                    'focus:bg-white focus:shadow-[0_0_0_4px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)]',
+                    errors.confirmPassword ? 'ring-2 ring-red-400/50' : ''
+                  ]"
+                />
+                <button
+                  type="button"
+                  @click="showConfirmPassword = !showConfirmPassword"
+                  class="absolute right-4 top-1/2 -translate-y-1/2 text-[#AEAEB2] hover:text-[#86868B] transition-colors"
+                >
+                  <svg v-if="!showConfirmPassword" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                  </svg>
+                </button>
+                <span v-if="errors.confirmPassword" class="absolute right-12 top-1/2 -translate-y-1/2 text-red-400 text-xs">
+                  {{ errors.confirmPassword }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Submit Button -->
+            <div class="pt-4">
+              <button
+                type="submit"
+                :disabled="loading"
+                class="w-full h-[54px] rounded-2xl font-medium text-[15px] transition-all duration-300 ease-out bg-[#1D1D1F] text-white shadow-[0_4px_14px_rgba(0,0,0,0.15)] hover:shadow-[0_6px_20px_rgba(0,0,0,0.2)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-[0_2px_8px_rgba(0,0,0,0.15)] disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+              >
+                <span v-if="loading" class="flex items-center justify-center gap-2">
+                  <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  注册中...
+                </span>
+                <span v-else>创建账户</span>
+              </button>
+            </div>
+          </form>
+
+          <!-- Divider -->
+          <div class="flex items-center gap-4 my-8">
+            <div class="flex-1 h-px bg-gradient-to-r from-transparent via-black/[0.08] to-transparent"></div>
+            <span class="text-[13px] text-[#AEAEB2]">或</span>
+            <div class="flex-1 h-px bg-gradient-to-r from-transparent via-black/[0.08] to-transparent"></div>
+          </div>
+
+          <!-- Login Link -->
+          <div class="text-center">
+            <p class="text-[14px] text-[#86868B]">
+              已有账户？
+              <a
+                @click.prevent="goToLogin"
+                href="#"
+                class="text-[#1D1D1F] font-medium hover:text-[#0066CC] transition-colors cursor-pointer ml-1"
+              >
+                立即登录
+              </a>
+            </p>
+          </div>
+
+          <!-- Info Badge -->
+          <div class="mt-6 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[#F5F5F7]">
+            <svg class="w-4 h-4 text-[#34C759]" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+            </svg>
+            <span class="text-[12px] text-[#86868B]">注册后将自动分配到默认组织</span>
+          </div>
+
+        </div>
       </div>
 
-      <el-form
-        ref="formRef"
-        :model="form"
-        :rules="rules"
-        class="register-form"
-        @submit.prevent="handleRegister"
-      >
-        <el-form-item prop="username">
-          <el-input
-            v-model="form.username"
-            placeholder="用户名（3-64个字符，仅限字母、数字、下划线）"
-            prefix-icon="User"
-            size="large"
-          />
-        </el-form-item>
-
-        <el-form-item prop="email">
-          <el-input
-            v-model="form.email"
-            placeholder="邮箱地址"
-            prefix-icon="Message"
-            size="large"
-          />
-        </el-form-item>
-
-        <el-form-item prop="full_name">
-          <el-input
-            v-model="form.full_name"
-            placeholder="真实姓名（可选）"
-            prefix-icon="UserFilled"
-            size="large"
-          />
-        </el-form-item>
-
-        <el-form-item prop="password">
-          <el-input
-            v-model="form.password"
-            type="password"
-            placeholder="密码（至少8个字符）"
-            prefix-icon="Lock"
-            size="large"
-            show-password
-          />
-        </el-form-item>
-
-        <el-form-item prop="confirmPassword">
-          <el-input
-            v-model="form.confirmPassword"
-            type="password"
-            placeholder="确认密码"
-            prefix-icon="Lock"
-            size="large"
-            show-password
-            @keyup.enter="handleRegister"
-          />
-        </el-form-item>
-
-        <el-form-item>
-          <el-button
-            type="primary"
-            size="large"
-            :loading="loading"
-            class="register-btn"
-            @click="handleRegister"
-          >
-            注册
-          </el-button>
-        </el-form-item>
-      </el-form>
-
-      <div class="register-footer">
-        <p>
-          已有账号？
-          <el-link type="primary" @click="goToLogin">立即登录</el-link>
+      <!-- Bottom decoration -->
+      <div class="mt-8 text-center">
+        <p class="text-[12px] text-[#AEAEB2]">
+          YueenEcoMind-AI · 智慧环保 · 绿色未来
         </p>
-        <p class="tip">注册后将自动分配到默认组织</p>
       </div>
+
     </div>
   </div>
 </template>
 
 <style scoped>
-.register-container {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+/* Ensure Inter font is applied */
+.font-sans {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
 }
 
-.register-card {
-  width: 450px;
-  padding: 40px;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+/* Smooth focus transitions */
+input:focus {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.register-header {
-  text-align: center;
-  margin-bottom: 30px;
+/* Custom scrollbar for the page if needed */
+::-webkit-scrollbar {
+  width: 6px;
 }
 
-.logo {
-  width: 60px;
-  height: 60px;
-  margin-bottom: 16px;
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.title {
-  font-size: 28px;
-  color: #333;
-  margin: 0 0 8px;
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
 }
 
-.subtitle {
-  color: #999;
-  margin: 0;
-  font-size: 14px;
-}
-
-.register-form {
-  margin-top: 20px;
-}
-
-.register-btn {
-  width: 100%;
-}
-
-.register-footer {
-  margin-top: 20px;
-  text-align: center;
-  color: #999;
-  font-size: 14px;
-}
-
-.register-footer p {
-  margin: 8px 0;
-}
-
-.register-footer .tip {
-  font-size: 12px;
-  color: #67c23a;
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
 }
 </style>

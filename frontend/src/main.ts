@@ -4,6 +4,9 @@ import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
+// Global styles - Apple-inspired design system
+import './styles/global.css'
+
 import App from './App.vue'
 import router from './router'
 

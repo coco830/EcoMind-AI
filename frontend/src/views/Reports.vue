@@ -435,4 +435,100 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
 }
+
+/* 主按钮 - 深蓝色 #0B1727 */
+:deep(.el-button--primary) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+  color: #fff !important;
+}
+
+:deep(.el-button--primary:hover),
+:deep(.el-button--primary:focus) {
+  background-color: #162a3d !important;
+  border-color: #162a3d !important;
+}
+
+:deep(.el-button--primary:active) {
+  background-color: #0a1320 !important;
+  border-color: #0a1320 !important;
+}
+
+:deep(.el-button--primary.is-disabled),
+:deep(.el-button--primary.is-disabled:hover) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+  opacity: 0.5;
+}
+
+/* 成功按钮 - 深绿色 */
+:deep(.el-button--success) {
+  background-color: #1D6F42 !important;
+  border-color: #1D6F42 !important;
+  color: #fff !important;
+}
+
+:deep(.el-button--success:hover),
+:deep(.el-button--success:focus) {
+  background-color: #258B52 !important;
+  border-color: #258B52 !important;
+}
+
+:deep(.el-button--success:active) {
+  background-color: #185A36 !important;
+  border-color: #185A36 !important;
+}
+
+/* 默认按钮 - 悬停深蓝色 */
+:deep(.el-button--default),
+:deep(.el-button--default:not(:hover)) {
+  border-color: #dcdfe6 !important;
+  color: #606266 !important;
+  background-color: #fff !important;
+}
+
+:deep(.el-button--default:hover) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.06) !important;
+}
+
+:deep(.el-button--default:active) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.1) !important;
+}
+
+:deep(.el-button--default:focus:not(:hover)) {
+  border-color: #dcdfe6 !important;
+  color: #606266 !important;
+  background-color: #fff !important;
+}
+
+/* 单选按钮组 - 日报/月报 */
+:deep(.el-radio-button__inner) {
+  border-color: #dcdfe6 !important;
+  color: #606266 !important;
+  background-color: #fff !important;
+}
+
+:deep(.el-radio-button__inner:hover) {
+  color: #0B1727 !important;
+}
+
+:deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+  color: #fff !important;
+  box-shadow: -1px 0 0 0 #0B1727 !important;
+}
+
+:deep(.el-radio-button:first-child .el-radio-button__inner) {
+  border-left-color: #dcdfe6 !important;
+}
+
+:deep(.el-radio-button__original-radio:checked + .el-radio-button__inner:hover) {
+  background-color: #162a3d !important;
+  border-color: #162a3d !important;
+}
 </style>

@@ -218,10 +218,10 @@ onMounted(loadDevices)
             {{ row.last_heartbeat ? new Date(row.last_heartbeat).toLocaleString() : '-' }}
           </template>
         </el-table-column>
-        <el-table-column v-if="canModifyDevices" label="操作" width="150" fixed="right">
+        <el-table-column v-if="canModifyDevices" label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link @click="openDialog(row)">编辑</el-button>
-            <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+            <el-button type="primary" size="small" @click="openDialog(row)">编辑</el-button>
+            <el-button type="danger" size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -331,5 +331,60 @@ onMounted(loadDevices)
   margin-top: 8px;
   font-size: 12px;
   color: #909399;
+}
+
+/* 统一按钮样式 - 深蓝色 #0B1727 */
+:deep(.el-button--primary) {
+  background-color: #0B1727 !important;
+  border-color: #0B1727 !important;
+}
+
+:deep(.el-button--primary:hover),
+:deep(.el-button--primary:focus) {
+  background-color: #162a3d !important;
+  border-color: #162a3d !important;
+}
+
+:deep(.el-button--primary:active) {
+  background-color: #0a1320 !important;
+  border-color: #0a1320 !important;
+}
+
+/* 删除按钮 - 深红色填充，白色文字 */
+:deep(.el-button--danger) {
+  background-color: #C41E3A !important;
+  border-color: #C41E3A !important;
+  color: #fff !important;
+}
+
+:deep(.el-button--danger:hover),
+:deep(.el-button--danger:focus) {
+  background-color: #D63850 !important;
+  border-color: #D63850 !important;
+}
+
+:deep(.el-button--danger:active) {
+  background-color: #A31830 !important;
+  border-color: #A31830 !important;
+}
+
+/* 默认按钮（取消按钮等） */
+:deep(.el-button--default) {
+  border-color: #dcdfe6 !important;
+  color: #606266 !important;
+  background-color: #fff !important;
+}
+
+:deep(.el-button--default:hover),
+:deep(.el-button--default:focus) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.06) !important;
+}
+
+:deep(.el-button--default:active) {
+  border-color: #0B1727 !important;
+  color: #0B1727 !important;
+  background-color: rgba(11, 23, 39, 0.1) !important;
 }
 </style>

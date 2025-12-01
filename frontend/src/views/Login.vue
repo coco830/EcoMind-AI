@@ -3,13 +3,11 @@ import { ref, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
-import type { FormInstance, FormRules } from 'element-plus'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 
-const formRef = ref<FormInstance>()
 const loading = ref(false)
 
 const form = reactive({
@@ -17,20 +15,23 @@ const form = reactive({
   password: ''
 })
 
-const rules: FormRules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 64, message: '用户名长度 3-64 个字符', trigger: 'blur' }
-  ],
-  password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 8, max: 128, message: '密码长度 8-128 个字符', trigger: 'blur' }
-  ]
-}
+// Nature background image
+const backgroundImage = "https://images.unsplash.com/photo-1437482078695-73f5ca6c96e2?ixlib=rb-4.0.3&auto=format&fit=crop&w=1600&q=80"
 
 const handleLogin = async () => {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
+  // Basic validation
+  if (!form.username.trim()) {
+    ElMessage.warning('请输入用户名')
+    return
+  }
+  if (!form.password) {
+    ElMessage.warning('请输入密码')
+    return
+  }
+  if (form.password.length < 8) {
+    ElMessage.warning('密码长度至少8个字符')
+    return
+  }
 
   loading.value = true
   try {
@@ -48,63 +49,166 @@ const handleLogin = async () => {
     loading.value = false
   }
 }
+
+const goToRegister = () => {
+  router.push({ name: 'Register' })
+}
 </script>
 
 <template>
-  <div class="login-container">
-    <div class="login-card">
-      <div class="login-header">
-        <img src="/vite.svg" alt="Logo" class="logo" />
-        <h1 class="title">EcoMind-AI</h1>
-        <p class="subtitle">智慧环保SaaS平台</p>
+  <div class="flex min-h-screen bg-white font-sans selection:bg-eco-blue selection:text-white">
+    <!-- Left Section: Image & Branding -->
+    <div class="hidden lg:block lg:w-1/2 relative overflow-hidden">
+      <!-- Background Image - Nature Theme -->
+      <div class="absolute inset-0">
+        <img
+          :src="backgroundImage"
+          alt="Nature landscape with river and forest"
+          class="object-cover w-full h-full"
+        />
+        <!-- Deep Blue Overlay -->
+        <div class="absolute inset-0 bg-[#0B1727]/20"></div>
       </div>
 
-      <el-form
-        ref="formRef"
-        :model="form"
-        :rules="rules"
-        class="login-form"
-        @submit.prevent="handleLogin"
-      >
-        <el-form-item prop="username">
-          <el-input
-            v-model="form.username"
-            placeholder="用户名"
-            prefix-icon="User"
-            size="large"
-          />
-        </el-form-item>
-
-        <el-form-item prop="password">
-          <el-input
-            v-model="form.password"
-            type="password"
-            placeholder="密码"
-            prefix-icon="Lock"
-            size="large"
-            show-password
-            @keyup.enter="handleLogin"
-          />
-        </el-form-item>
-
-        <el-form-item>
-          <el-button
-            type="primary"
-            size="large"
-            :loading="loading"
-            class="login-btn"
-            @click="handleLogin"
+      <!-- Brand Overlay - Logo & Text -->
+      <div class="absolute top-16 left-16 flex items-center gap-3 z-10">
+        <div class="text-white drop-shadow-xl">
+          <!-- Logo SVG -->
+          <svg
+            viewBox="0 0 89 95"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            class="w-16 h-16"
           >
-            登录
-          </el-button>
-        </el-form-item>
-      </el-form>
+            <g fill="currentColor">
+              <!-- Water drop outline -->
+              <path d="M51 14 L44 23 L38 34 L40 35 L49 20 L51 19 L55 23 L66 40 L70 50 L70 59 L67 65 L62 70 L56 73 L47 73 L46 75 L56 75 L63 72 L70 65 L72 60 L71 46 L66 36 Z" />
+              <!-- Leaf -->
+              <path d="M16 32 L15 33 L15 48 L18 55 L25 62 L35 65 L39 70 L38 64 L35 57 L31 51 L23 43 L25 42 L31 46 L38 53 L43 61 L44 59 L44 48 L43 46 L35 38 Z" />
+              <!-- Inner arc -->
+              <path d="M65 53 L63 53 L61 60 L54 66 L55 67 L59 66 L62 63 L65 58 Z" />
+            </g>
+          </svg>
+        </div>
+        <span class="text-white text-4xl font-semibold tracking-wide drop-shadow-xl">
+          YueenEcoMind-AI
+        </span>
+      </div>
 
-      <div class="login-footer">
-        <p>演示账号: admin / admin123</p>
-        <p>
+      <!-- Quote / Tagline at bottom left -->
+      <div class="absolute bottom-16 left-16 right-16 z-10">
+        <p class="text-2xl font-light tracking-wide leading-relaxed text-white drop-shadow-lg">
+          Empowering a greener future through intelligence.
+        </p>
+        <p class="text-lg font-light mt-3 tracking-wider text-white drop-shadow-lg">
+          通过智慧力量推动更绿色的未来
+        </p>
+      </div>
+    </div>
+
+    <!-- Right Section: Login Form -->
+    <div class="w-full lg:w-1/2 flex flex-col justify-center items-center px-8 md:px-16 xl:px-32 relative bg-white">
+
+      <!-- Mobile Header (Only visible on small screens) -->
+      <div class="lg:hidden absolute top-8 left-8 flex items-center gap-3 mb-8">
+        <div class="text-eco-blue">
+          <svg viewBox="0 0 89 95" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-10 h-10">
+            <g fill="currentColor">
+              <path d="M51 14 L44 23 L38 34 L40 35 L49 20 L51 19 L55 23 L66 40 L70 50 L70 59 L67 65 L62 70 L56 73 L47 73 L46 75 L56 75 L63 72 L70 65 L72 60 L71 46 L66 36 Z" />
+              <path d="M16 32 L15 33 L15 48 L18 55 L25 62 L35 65 L39 70 L38 64 L35 57 L31 51 L23 43 L25 42 L31 46 L38 53 L43 61 L44 59 L44 48 L43 46 L35 38 Z" />
+              <path d="M65 53 L63 53 L61 60 L54 66 L55 67 L59 66 L62 63 L65 58 Z" />
+            </g>
+          </svg>
+        </div>
+        <span class="text-eco-blue text-2xl font-bold">YueenEcoMind-AI</span>
+      </div>
+
+      <div class="w-full max-w-[440px] space-y-12">
+
+        <!-- Header Text Section -->
+        <div class="space-y-3">
+          <h1 class="text-5xl text-gray-900 font-bold tracking-tight text-left">
+            Welcome Back
+          </h1>
+          <p class="text-gray-400 text-sm tracking-wide font-medium text-left">
+            YueenEcoMind-AI 智慧环保中台
+          </p>
+        </div>
+
+        <!-- Form -->
+        <form @submit.prevent="handleLogin" class="space-y-8">
+          <div class="space-y-6">
+            <!-- Username Input -->
+            <input
+              v-model="form.username"
+              name="username"
+              type="text"
+              placeholder="Username 用户名"
+              required
+              class="w-full px-6 py-4 bg-white border border-gray-200 rounded-2xl text-gray-800 placeholder-gray-400 shadow-[0_4px_16px_rgba(0,0,0,0.06)] focus:outline-none focus:bg-white focus:ring-0 focus:shadow-[0_8px_24px_rgba(11,23,39,0.12)] focus:border-[#0B1727]/30 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] transition-all duration-300 ease-out text-base"
+            />
+
+            <!-- Password Input -->
+            <div class="space-y-2">
+              <input
+                v-model="form.password"
+                name="password"
+                type="password"
+                placeholder="Password 密码"
+                required
+                @keyup.enter="handleLogin"
+                class="w-full px-6 py-4 bg-white border border-gray-200 rounded-2xl text-gray-800 placeholder-gray-400 shadow-[0_4px_16px_rgba(0,0,0,0.06)] focus:outline-none focus:bg-white focus:ring-0 focus:shadow-[0_8px_24px_rgba(11,23,39,0.12)] focus:border-[#0B1727]/30 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] transition-all duration-300 ease-out text-base"
+              />
+              <!-- Forgot Password Link -->
+              <div class="flex justify-end pt-1">
+                <a
+                  href="#"
+                  class="text-gray-400 text-xs hover:text-eco-blue transition-colors duration-300 font-medium"
+                >
+                  忘记密码？
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Demo Account Hint -->
+          <div class="bg-[#F7F8FA] rounded-xl px-4 py-3 flex items-center justify-between">
+            <span class="text-gray-400 text-xs">演示账号</span>
+            <span class="text-gray-700 text-sm font-mono font-medium">admin / admin123</span>
+          </div>
+
+          <!-- Submit Button -->
+          <div class="pt-2">
+            <button
+              type="submit"
+              :disabled="loading"
+              class="w-full py-4 px-6 rounded-full font-medium tracking-wide transition-all duration-300 bg-[#0B1727] text-white shadow-[0_8px_20px_rgba(11,23,39,0.25)] hover:shadow-[0_12px_28px_rgba(11,23,39,0.35)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-[0_4px_10px_rgba(11,23,39,0.2)] disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none"
+            >
+              <span v-if="loading" class="flex items-center justify-center gap-2">
+                <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                登录中...
+              </span>
+              <span v-else>Login 登录</span>
+            </button>
+          </div>
+        </form>
+
+      </div>
+
+      <!-- Footer: Sign Up -->
+      <div class="absolute bottom-12 w-full text-center">
+        <p class="text-gray-400 text-sm">
           还没有账号？
-          <el-link type="primary" @click="$router.push({ name: 'Register' })">立即注册</el-link>
+          <a
+            @click.prevent="goToRegister"
+            href="#"
+            class="text-gray-800 font-semibold hover:text-eco-blue transition-colors ml-1 cursor-pointer"
+          >
+            立即注册
+          </a>
         </p>
       </div>
     </div>
@@ -112,56 +216,20 @@ const handleLogin = async () => {
 </template>
 
 <style scoped>
-.login-container {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+/* Custom eco-blue color fallback if Tailwind isn't fully loaded */
+.text-eco-blue {
+  color: #1E6F9F;
 }
 
-.login-card {
-  width: 400px;
-  padding: 40px;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+.bg-eco-blue {
+  background-color: #1E6F9F;
 }
 
-.login-header {
-  text-align: center;
-  margin-bottom: 30px;
+.hover\:text-eco-blue:hover {
+  color: #1E6F9F;
 }
 
-.logo {
-  width: 60px;
-  height: 60px;
-  margin-bottom: 16px;
-}
-
-.title {
-  font-size: 28px;
-  color: #333;
-  margin: 0 0 8px;
-}
-
-.subtitle {
-  color: #999;
-  margin: 0;
-}
-
-.login-form {
-  margin-top: 20px;
-}
-
-.login-btn {
-  width: 100%;
-}
-
-.login-footer {
-  margin-top: 20px;
-  text-align: center;
-  color: #999;
-  font-size: 12px;
+.selection\:bg-eco-blue::selection {
+  background-color: #1E6F9F;
 }
 </style>
