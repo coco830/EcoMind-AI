@@ -34,7 +34,10 @@ const handleLogin = async () => {
 
   loading.value = true
   try {
-    await authStore.login(form)
+    await authStore.login({
+      username: form.username.trim(),
+      password: form.password
+    })
     ElMessage.success('登录成功')
 
     const redirect = route.query.redirect as string

@@ -2,11 +2,17 @@
 
 支持宽表模式：将同一时间点的所有污染物一次性写入数据库。
 符合 HJ 212-2017/2025 标准。
+
+Security:
+- Device authentication via MN number lookup
+- Multi-tenant data isolation via org_id
+- Unregistered devices are rejected
 """
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
+from uuid import UUID
 
 import structlog
 
@@ -15,13 +21,14 @@ from app.core.encryption import get_sm4_cipher
 from app.core.pollutant_library import is_known_pollutant, get_pollutant_name
 from app.db.tdengine import get_tdengine_client
 from app.gateway.hj212_parser import HJ212Parser, HJ212Packet
+from app.gateway.device_registry import get_device_registry, DeviceInfo
 
 settings = get_settings()
 logger = structlog.get_logger()
 
 
 class DeviceConnection:
-    """Represents a connected device."""
+    """Represents a connected device with authentication info."""
 
     def __init__(
         self,
@@ -35,14 +42,33 @@ class DeviceConnection:
         self.connected_at = datetime.utcnow()
         self.last_heartbeat = datetime.utcnow()
         self.addr = writer.get_extra_info("peername")
+        # Device authentication info (populated after MN lookup)
+        self.device_info: Optional[DeviceInfo] = None
+        self.authenticated: bool = False
 
     def update_heartbeat(self) -> None:
         """Update last heartbeat time."""
         self.last_heartbeat = datetime.utcnow()
 
+    @property
+    def org_id(self) -> Optional[UUID]:
+        """Get the organization ID from authenticated device info."""
+        return self.device_info.org_id if self.device_info else None
+
+    @property
+    def device_id(self) -> Optional[UUID]:
+        """Get the device ID from authenticated device info."""
+        return self.device_info.device_id if self.device_info else None
+
 
 class TCPGateway:
-    """TCP Gateway for HJ 212 protocol data collection."""
+    """TCP Gateway for HJ 212 protocol data collection.
+
+    Security features:
+    - Device authentication via MN number lookup in database
+    - Multi-tenant isolation via org_id
+    - Unregistered devices are rejected
+    """
 
     def __init__(self) -> None:
         self.host = settings.host
@@ -52,6 +78,7 @@ class TCPGateway:
         self.server: asyncio.Server | None = None
         self._running = False
         self._sm4_cipher = None
+        self._device_registry = get_device_registry()
 
     async def start(self) -> None:
         """Start TCP gateway server."""
@@ -119,7 +146,11 @@ class TCPGateway:
         connection: DeviceConnection,
         data: bytes,
     ) -> None:
-        """Process incoming data from device."""
+        """Process incoming data from device.
+
+        Security: Authenticates device via MN number lookup and enforces
+        multi-tenant isolation by associating data with the correct org_id.
+        """
         # Try to decrypt if encrypted (check for SM4 marker or config)
         decrypted_data = self._try_decrypt(data)
 
@@ -134,17 +165,28 @@ class TCPGateway:
             )
             return
 
-        # Update connection info
-        if packet.mn and not connection.mn:
-            connection.mn = packet.mn
-            self.connections[packet.mn] = connection
-            logger.info("Device identified", mn=packet.mn, addr=connection.addr)
+        # Authenticate device if MN is provided and not yet authenticated
+        if packet.mn and not connection.authenticated:
+            await self._authenticate_device(connection, packet.mn)
+
+        # Reject data from unauthenticated devices
+        if not connection.authenticated:
+            logger.warning(
+                "Rejecting data from unauthenticated device",
+                addr=connection.addr,
+                mn=packet.mn,
+            )
+            # Still send response to maintain protocol compliance
+            response = self.parser.build_response(packet, error=True)
+            connection.writer.write(response)
+            await connection.writer.drain()
+            return
 
         connection.update_heartbeat()
 
         # Process based on command type
         if packet.is_realtime or packet.is_minute_data or packet.is_hour_data:
-            await self._handle_monitoring_data(packet)
+            await self._handle_monitoring_data(connection, packet)
         elif packet.is_heartbeat:
             await self._handle_heartbeat(connection, packet)
         else:
@@ -154,6 +196,47 @@ class TCPGateway:
         response = self.parser.build_response(packet)
         connection.writer.write(response)
         await connection.writer.drain()
+
+    async def _authenticate_device(
+        self,
+        connection: DeviceConnection,
+        mn: str,
+    ) -> bool:
+        """Authenticate device by MN number lookup.
+
+        Args:
+            connection: Device connection
+            mn: Device MN number
+
+        Returns:
+            True if device is authenticated, False otherwise
+        """
+        device_info = await self._device_registry.get_device_by_mn(mn)
+
+        if device_info is None:
+            logger.warning(
+                "Device authentication failed - unregistered device",
+                mn=mn,
+                addr=connection.addr,
+            )
+            connection.authenticated = False
+            return False
+
+        # Update connection with device info
+        connection.mn = mn
+        connection.device_info = device_info
+        connection.authenticated = True
+        self.connections[mn] = connection
+
+        logger.info(
+            "Device authenticated successfully",
+            mn=mn,
+            device_id=str(device_info.device_id),
+            org_id=str(device_info.org_id),
+            device_name=device_info.name,
+            addr=connection.addr,
+        )
+        return True
 
     def _try_decrypt(self, data: bytes) -> bytes:
         """Try to decrypt data using SM4 if encrypted."""
@@ -173,13 +256,29 @@ class TCPGateway:
 
         return data
 
-    async def _handle_monitoring_data(self, packet: HJ212Packet) -> None:
+    async def _handle_monitoring_data(
+        self,
+        connection: DeviceConnection,
+        packet: HJ212Packet,
+    ) -> None:
         """Handle monitoring data packet (CN=2011, 2051, 2061).
 
         使用宽表模式：将同一时间点的所有污染物数据一次性写入数据库。
         同时保持窄表兼容，以便现有查询API继续工作。
+
+        Security: Uses authenticated connection's org_id for multi-tenant isolation.
         """
         if not packet.cp or "pollutants" not in packet.cp:
+            return
+
+        # Use org_id from authenticated device (no more hardcoding!)
+        org_id = str(connection.org_id) if connection.org_id else None
+        if not org_id:
+            logger.error(
+                "Cannot process data - no org_id available",
+                mn=packet.mn,
+                addr=connection.addr,
+            )
             return
 
         data_time = packet.cp.get("DataTime", datetime.utcnow())
@@ -210,6 +309,7 @@ class TCPGateway:
             logger.info(
                 "Received unknown pollutant codes (will attempt to store)",
                 mn=packet.mn,
+                org_id=org_id,
                 unknown_codes=unknown_codes,
             )
 
@@ -217,7 +317,7 @@ class TCPGateway:
         try:
             success = await tdengine.insert_wide_monitoring_data(
                 device_id=packet.mn,
-                org_id="default",  # TODO: lookup org from device
+                org_id=org_id,  # Now using authenticated org_id
                 timestamp=data_time,
                 pollutants=pollutants,
                 data_type=data_type,
@@ -226,12 +326,14 @@ class TCPGateway:
                 logger.debug(
                     "Wide table insert successful",
                     mn=packet.mn,
+                    org_id=org_id,
                     pollutant_count=len(pollutants),
                 )
         except Exception as e:
             logger.error(
                 "Wide table insert failed",
                 mn=packet.mn,
+                org_id=org_id,
                 error=str(e),
             )
 
@@ -248,7 +350,7 @@ class TCPGateway:
                 await tdengine.insert_monitoring_data(
                     device_id=packet.mn,
                     pollutant_code=pol_code,
-                    org_id="default",
+                    org_id=org_id,  # Now using authenticated org_id
                     ts=data_time,
                     value=float(value),
                     flag=str(flag),
@@ -258,6 +360,7 @@ class TCPGateway:
                 logger.error(
                     "Failed to insert monitoring data (narrow table)",
                     mn=packet.mn,
+                    org_id=org_id,
                     pollutant=pol_code,
                     error=str(e),
                 )
@@ -267,6 +370,7 @@ class TCPGateway:
         logger.debug(
             "Monitoring data processed",
             mn=packet.mn,
+            org_id=org_id,
             cn=packet.cn,
             data_type=data_type,
             pollutant_count=len(pollutants),

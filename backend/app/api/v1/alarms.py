@@ -18,14 +18,23 @@ from app.api.deps import get_current_active_user, require_operator
 router = APIRouter()
 
 
-def _build_org_filter_query(query, current_user: User):
-    """Add organization filter to alarm query based on user's org."""
+def _build_org_filter_query(query, current_user: User, join_device: bool = True):
+    """Add organization filter to alarm query based on user's org.
+
+    Args:
+        query: SQLAlchemy query
+        current_user: Current authenticated user
+        join_device: Whether to join Device table (set False if already joined via selectinload)
+    """
     if current_user.is_superadmin:
         return query
     if current_user.org_id:
-        query = query.join(Device, Alarm.device_id == Device.id).where(
-            Device.org_id == current_user.org_id
-        )
+        if join_device:
+            query = query.join(Device, Alarm.device_id == Device.id).where(
+                Device.org_id == current_user.org_id
+            )
+        else:
+            query = query.where(Device.org_id == current_user.org_id)
     return query
 
 
@@ -41,8 +50,14 @@ async def list_alarms(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
 ) -> list[AlarmResponse]:
-    """List alarms with optional filters. Filtered by user's organization."""
-    query = select(Alarm)
+    """List alarms with optional filters. Filtered by user's organization.
+
+    Uses selectinload to eagerly load device relationship, avoiding N+1 queries.
+    """
+    # Use selectinload to preload device relationship (avoids N+1 queries)
+    query = select(Alarm).options(
+        selectinload(Alarm.device).selectinload(Device.organization)
+    )
 
     # Apply organization filter
     query = _build_org_filter_query(query, current_user)
@@ -75,8 +90,16 @@ async def list_pending_alarms(
     current_user: Annotated[User, Depends(get_current_active_user)],
     limit: int = Query(100, ge=1, le=1000),
 ) -> list[AlarmResponse]:
-    """List pending (unacknowledged) alarms. Filtered by user's organization."""
-    query = select(Alarm).where(Alarm.status == AlarmStatus.PENDING.value)
+    """List pending (unacknowledged) alarms. Filtered by user's organization.
+
+    Uses selectinload to eagerly load device relationship, avoiding N+1 queries.
+    """
+    # Use selectinload to preload device relationship (avoids N+1 queries)
+    query = (
+        select(Alarm)
+        .options(selectinload(Alarm.device).selectinload(Device.organization))
+        .where(Alarm.status == AlarmStatus.PENDING.value)
+    )
 
     # Apply organization filter
     query = _build_org_filter_query(query, current_user)
@@ -88,20 +111,21 @@ async def list_pending_alarms(
     return [AlarmResponse.model_validate(a) for a in alarms]
 
 
-async def _check_alarm_access(
+def _check_alarm_access(
     alarm: Alarm,
     current_user: User,
-    db: AsyncSession,
 ) -> None:
-    """Check if user has access to the alarm via device's organization."""
+    """Check if user has access to the alarm via device's organization.
+
+    Note: This function expects alarm.device to be preloaded via selectinload
+    to avoid N+1 query issues. Use selectinload(Alarm.device) when querying.
+    """
     if current_user.is_superadmin:
         return
 
     if current_user.org_id:
-        # Get the device to check org
-        result = await db.execute(select(Device).where(Device.id == alarm.device_id))
-        device = result.scalar_one_or_none()
-        if device and device.org_id != current_user.org_id:
+        # Use preloaded device relationship (avoids N+1 query)
+        if alarm.device and alarm.device.org_id != current_user.org_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to this alarm",
@@ -115,7 +139,11 @@ async def get_alarm(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> AlarmResponse:
     """Get alarm by ID. Access controlled by organization."""
-    result = await db.execute(select(Alarm).where(Alarm.id == alarm_id))
+    result = await db.execute(
+        select(Alarm)
+        .options(selectinload(Alarm.device))
+        .where(Alarm.id == alarm_id)
+    )
     alarm = result.scalar_one_or_none()
 
     if alarm is None:
@@ -124,8 +152,8 @@ async def get_alarm(
             detail="Alarm not found",
         )
 
-    # Check organization access
-    await _check_alarm_access(alarm, current_user, db)
+    # Check organization access (uses preloaded device)
+    _check_alarm_access(alarm, current_user)
 
     return AlarmResponse.model_validate(alarm)
 
@@ -160,7 +188,11 @@ async def acknowledge_alarm(
     current_user: Annotated[User, Depends(require_operator)],
 ) -> AlarmResponse:
     """Acknowledge an alarm. Access controlled by organization."""
-    result = await db.execute(select(Alarm).where(Alarm.id == alarm_id))
+    result = await db.execute(
+        select(Alarm)
+        .options(selectinload(Alarm.device))
+        .where(Alarm.id == alarm_id)
+    )
     alarm = result.scalar_one_or_none()
 
     if alarm is None:
@@ -169,8 +201,8 @@ async def acknowledge_alarm(
             detail="Alarm not found",
         )
 
-    # Check organization access
-    await _check_alarm_access(alarm, current_user, db)
+    # Check organization access (uses preloaded device)
+    _check_alarm_access(alarm, current_user)
 
     if alarm.status != AlarmStatus.PENDING.value:
         raise HTTPException(
@@ -195,7 +227,11 @@ async def resolve_alarm(
     current_user: Annotated[User, Depends(require_operator)],
 ) -> AlarmResponse:
     """Resolve an alarm. Access controlled by organization."""
-    result = await db.execute(select(Alarm).where(Alarm.id == alarm_id))
+    result = await db.execute(
+        select(Alarm)
+        .options(selectinload(Alarm.device))
+        .where(Alarm.id == alarm_id)
+    )
     alarm = result.scalar_one_or_none()
 
     if alarm is None:
@@ -204,8 +240,8 @@ async def resolve_alarm(
             detail="Alarm not found",
         )
 
-    # Check organization access
-    await _check_alarm_access(alarm, current_user, db)
+    # Check organization access (uses preloaded device)
+    _check_alarm_access(alarm, current_user)
 
     if alarm.status == AlarmStatus.RESOLVED.value:
         raise HTTPException(
@@ -229,7 +265,11 @@ async def delete_alarm(
     current_user: Annotated[User, Depends(require_operator)],
 ) -> None:
     """Delete an alarm. Access controlled by organization."""
-    result = await db.execute(select(Alarm).where(Alarm.id == alarm_id))
+    result = await db.execute(
+        select(Alarm)
+        .options(selectinload(Alarm.device))
+        .where(Alarm.id == alarm_id)
+    )
     alarm = result.scalar_one_or_none()
 
     if alarm is None:
@@ -238,8 +278,8 @@ async def delete_alarm(
             detail="Alarm not found",
         )
 
-    # Check organization access
-    await _check_alarm_access(alarm, current_user, db)
+    # Check organization access (uses preloaded device)
+    _check_alarm_access(alarm, current_user)
 
     await db.delete(alarm)
 
@@ -249,24 +289,52 @@ async def get_alarm_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> dict:
-    """Get alarm statistics summary. Filtered by user's organization."""
-    query = select(Alarm)
+    """Get alarm statistics summary. Filtered by user's organization.
+
+    Uses database-level aggregation for better performance instead of loading all rows.
+    """
+    from sqlalchemy import case, func as sql_func
+
+    # Base query with organization filter
+    base_query = select(Alarm.id)
+    if not current_user.is_superadmin and current_user.org_id:
+        base_query = base_query.join(Device, Alarm.device_id == Device.id).where(
+            Device.org_id == current_user.org_id
+        )
+
+    # Count by status using database aggregation
+    status_query = (
+        select(
+            sql_func.count().label("total"),
+            sql_func.count().filter(Alarm.status == AlarmStatus.PENDING.value).label("pending"),
+            sql_func.count().filter(Alarm.status == AlarmStatus.ACKNOWLEDGED.value).label("acknowledged"),
+            sql_func.count().filter(Alarm.status == AlarmStatus.RESOLVED.value).label("resolved"),
+            sql_func.count().filter(Alarm.level == AlarmLevel.INFO.value).label("info"),
+            sql_func.count().filter(Alarm.level == AlarmLevel.WARNING.value).label("warning"),
+            sql_func.count().filter(Alarm.level == AlarmLevel.CRITICAL.value).label("critical"),
+        )
+    )
 
     # Apply organization filter
-    query = _build_org_filter_query(query, current_user)
+    if not current_user.is_superadmin and current_user.org_id:
+        status_query = status_query.select_from(Alarm).join(
+            Device, Alarm.device_id == Device.id
+        ).where(Device.org_id == current_user.org_id)
+    else:
+        status_query = status_query.select_from(Alarm)
 
-    result = await db.execute(query)
-    alarms = result.scalars().all()
+    result = await db.execute(status_query)
+    row = result.one()
 
     stats = {
-        "total": len(alarms),
-        "pending": sum(1 for a in alarms if a.status == AlarmStatus.PENDING.value),
-        "acknowledged": sum(1 for a in alarms if a.status == AlarmStatus.ACKNOWLEDGED.value),
-        "resolved": sum(1 for a in alarms if a.status == AlarmStatus.RESOLVED.value),
+        "total": row.total or 0,
+        "pending": row.pending or 0,
+        "acknowledged": row.acknowledged or 0,
+        "resolved": row.resolved or 0,
         "by_level": {
-            "info": sum(1 for a in alarms if a.level == AlarmLevel.INFO.value),
-            "warning": sum(1 for a in alarms if a.level == AlarmLevel.WARNING.value),
-            "critical": sum(1 for a in alarms if a.level == AlarmLevel.CRITICAL.value),
+            "info": row.info or 0,
+            "warning": row.warning or 0,
+            "critical": row.critical or 0,
         },
     }
 

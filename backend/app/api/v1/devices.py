@@ -7,11 +7,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.postgres import get_db
 from app.models.device import (
     Device, DeviceCreate, DeviceResponse, DeviceStatus, DeviceType, ThresholdConfig
 )
+from app.models.organization import Organization
 from app.models.user import User
 from app.api.deps import get_current_active_user, require_operator
 
@@ -82,8 +84,12 @@ async def list_devices(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
 ) -> list[DeviceResponse]:
-    """List devices with optional filters."""
-    query = select(Device)
+    """List devices with optional filters.
+
+    Uses selectinload to eagerly load organization relationship, avoiding N+1 queries.
+    """
+    # Use selectinload to preload organization relationship (avoids N+1 queries)
+    query = select(Device).options(selectinload(Device.organization))
 
     # Filter by organization if user is not admin
     if current_user.org_id:
@@ -108,7 +114,11 @@ async def get_device(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> DeviceResponse:
     """Get device by ID."""
-    result = await db.execute(select(Device).where(Device.id == device_id))
+    result = await db.execute(
+        select(Device)
+        .options(selectinload(Device.organization))
+        .where(Device.id == device_id)
+    )
     device = result.scalar_one_or_none()
 
     if device is None:
@@ -272,20 +282,31 @@ async def get_device_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> dict:
-    """Get device statistics summary."""
-    query = select(Device)
-    if current_user.org_id:
-        query = query.where(Device.org_id == current_user.org_id)
+    """Get device statistics summary.
 
-    result = await db.execute(query)
-    devices = result.scalars().all()
+    Uses database-level aggregation for better performance instead of loading all rows.
+    """
+    # Use database aggregation instead of loading all devices
+    status_query = select(
+        func.count().label("total"),
+        func.count().filter(Device.status == DeviceStatus.ONLINE.value).label("online"),
+        func.count().filter(Device.status == DeviceStatus.OFFLINE.value).label("offline"),
+        func.count().filter(Device.status == DeviceStatus.ALARM.value).label("alarm"),
+        func.count().filter(Device.status == DeviceStatus.MAINTENANCE.value).label("maintenance"),
+    ).select_from(Device)
+
+    if current_user.org_id:
+        status_query = status_query.where(Device.org_id == current_user.org_id)
+
+    result = await db.execute(status_query)
+    row = result.one()
 
     stats = {
-        "total": len(devices),
-        "online": sum(1 for d in devices if d.status == DeviceStatus.ONLINE.value),
-        "offline": sum(1 for d in devices if d.status == DeviceStatus.OFFLINE.value),
-        "alarm": sum(1 for d in devices if d.status == DeviceStatus.ALARM.value),
-        "maintenance": sum(1 for d in devices if d.status == DeviceStatus.MAINTENANCE.value),
+        "total": row.total or 0,
+        "online": row.online or 0,
+        "offline": row.offline or 0,
+        "alarm": row.alarm or 0,
+        "maintenance": row.maintenance or 0,
     }
 
     return stats

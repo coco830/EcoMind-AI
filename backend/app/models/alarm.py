@@ -5,7 +5,7 @@ from enum import Enum
 from uuid import UUID, uuid4
 
 from pydantic import Field
-from sqlalchemy import String, DateTime, ForeignKey, Text, func, Integer
+from sqlalchemy import String, DateTime, ForeignKey, Text, func, Integer, Index
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -42,6 +42,16 @@ class Alarm(Base):
     """Alarm ORM model."""
 
     __tablename__ = "alarms"
+    __table_args__ = (
+        # Index for filtering by device and created_at (common query pattern)
+        Index('ix_alarm_device_created', 'device_id', 'created_at'),
+        # Index for filtering by status (pending alarms query)
+        Index('ix_alarm_status', 'status'),
+        # Index for filtering by level
+        Index('ix_alarm_level', 'level'),
+        # Composite index for status + created_at (common for listing)
+        Index('ix_alarm_status_created', 'status', 'created_at'),
+    )
 
     id: Mapped[UUID] = mapped_column(
         GUID, primary_key=True, default=uuid4

@@ -1,14 +1,21 @@
-"""Authentication API endpoints."""
+"""Authentication API endpoints.
+
+Security:
+- Rate limiting on login and register endpoints to prevent brute force attacks
+- Login: 5 attempts per minute per IP
+- Register: 3 attempts per minute per IP
+"""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token, get_password_hash, verify_password
+from app.core.rate_limiter import limiter
 from app.db.postgres import get_db
 from app.models.user import User, UserCreate, UserResponse
 from app.api.deps import get_current_active_user
@@ -32,13 +39,20 @@ class LoginResponse(BaseModel):
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> LoginResponse:
-    """Authenticate user and return JWT token."""
+    """Authenticate user and return JWT token.
+
+    Rate limited to 5 attempts per minute per IP to prevent brute force attacks.
+    """
+    # Trim username to handle accidental whitespace
+    username = form_data.username.strip()
     result = await db.execute(
-        select(User).where(User.username == form_data.username)
+        select(User).where(User.username == username)
     )
     user = result.scalar_one_or_none()
 
@@ -65,11 +79,16 @@ async def login(
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("3/minute")
 async def register(
+    request: Request,
     user_data: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserResponse:
-    """Register a new user. Creates a new organization for each user unless org_id is specified."""
+    """Register a new user. Creates a new organization for each user unless org_id is specified.
+
+    Rate limited to 3 attempts per minute per IP to prevent abuse.
+    """
     from app.models.organization import Organization
     from uuid import uuid4
 

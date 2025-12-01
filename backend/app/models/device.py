@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
-from sqlalchemy import String, DateTime, ForeignKey, Float, Text, func, UniqueConstraint
+from sqlalchemy import String, DateTime, ForeignKey, Float, Text, func, UniqueConstraint, Index
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +39,16 @@ class Device(Base):
     __table_args__ = (
         # MN is unique within each organization (multi-tenant isolation)
         UniqueConstraint('mn', 'org_id', name='uq_device_mn_org'),
+        # Index for filtering by org and status (common query pattern)
+        Index('ix_device_org_status', 'org_id', 'status'),
+        # Index for filtering by org_id alone
+        Index('ix_device_org_id', 'org_id'),
+        # Index for filtering by status
+        Index('ix_device_status', 'status'),
+        # Index for last_heartbeat queries (device health monitoring)
+        Index('ix_device_last_heartbeat', 'last_heartbeat'),
+        # Index for created_at (device listing sorted by creation)
+        Index('ix_device_created_at', 'created_at'),
     )
 
     id: Mapped[UUID] = mapped_column(

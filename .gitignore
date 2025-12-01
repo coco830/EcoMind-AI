@@ -64,3 +64,6 @@ specs/*/checklists/*.md
 
 # TDengine data (local development)
 taosdata/
+
+# PyTorch Lightning logs
+lightning_logs/
