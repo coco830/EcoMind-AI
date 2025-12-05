@@ -3,12 +3,20 @@
 from datetime import datetime, timedelta
 import random
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 from pydantic import BaseModel
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
+from app.db.postgres import get_db
 from app.db.tdengine_client import get_tdengine_client
 from app.models.monitoring import MonitoringDataResponse
+from app.models.device import Device, DeviceStatus
+from app.models.alarm import Alarm, AlarmStatus
+from app.models.user import User
+from app.api.deps import get_current_active_user
+from typing import Annotated
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -61,37 +69,154 @@ class TrendDataPoint(BaseModel):
 
 
 @router.get("/stats")
-async def get_dashboard_stats() -> DashboardStats:
+async def get_dashboard_stats(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> DashboardStats:
     """
-    Get dashboard statistics - public endpoint.
+    Get dashboard statistics for the current user's organization.
 
-    Returns aggregated stats for the dashboard overview.
+    Returns aggregated stats filtered by user's org_id for multi-tenant isolation.
     """
-    # Return placeholder stats for now
-    # In production, this would query from PostgreSQL and TDengine
-    return DashboardStats(
-        device_count=5,
-        online_count=3,
-        offline_count=2,
-        alarm_count=1,
-        data_count=100,
-        pending_alarms=2
-    )
+    try:
+        # Superadmin can see all data, regular users only see their org's data
+        org_id = None if current_user.is_superadmin else current_user.org_id
+
+        # Build base query with org filter
+        device_base_query = select(func.count(Device.id))
+        if org_id:
+            device_base_query = device_base_query.where(Device.org_id == org_id)
+
+        # Query device counts
+        device_count_result = await db.execute(device_base_query)
+        device_count = device_count_result.scalar() or 0
+
+        online_query = select(func.count(Device.id)).where(Device.status == DeviceStatus.ONLINE)
+        if org_id:
+            online_query = online_query.where(Device.org_id == org_id)
+        online_count_result = await db.execute(online_query)
+        online_count = online_count_result.scalar() or 0
+
+        offline_count = device_count - online_count
+
+        # Query alarm counts - devices with issues in user's org
+        alarm_query = select(func.count(Device.id)).where(
+            Device.status.in_([DeviceStatus.OFFLINE, DeviceStatus.WARNING])
+        )
+        if org_id:
+            alarm_query = alarm_query.where(Device.org_id == org_id)
+        alarm_device_result = await db.execute(alarm_query)
+        alarm_count = alarm_device_result.scalar() or 0
+
+        # Pending alarms count - only for devices in user's org (or all for superadmin)
+        if org_id:
+            # Get device IDs for user's org first
+            device_ids_query = select(Device.id).where(Device.org_id == org_id)
+            device_ids_result = await db.execute(device_ids_query)
+            device_ids = [row[0] for row in device_ids_result.fetchall()]
+
+            if device_ids:
+                pending_alarms_result = await db.execute(
+                    select(func.count(Alarm.id)).where(
+                        Alarm.status == AlarmStatus.PENDING,
+                        Alarm.device_id.in_(device_ids)
+                    )
+                )
+                pending_alarms = pending_alarms_result.scalar() or 0
+            else:
+                pending_alarms = 0
+        else:
+            # Superadmin sees all pending alarms
+            pending_alarms_result = await db.execute(
+                select(func.count(Alarm.id)).where(Alarm.status == AlarmStatus.PENDING)
+            )
+            pending_alarms = pending_alarms_result.scalar() or 0
+
+        # Get data count from TDengine (last 24 hours) - filtered by org's devices
+        data_count = 0
+        try:
+            client = get_tdengine_client()
+            end_time = datetime.now()
+            start_time = end_time - timedelta(hours=24)
+
+            # Superadmin sees all data, regular users only see their org's devices
+            if org_id:
+                device_mns_query = select(Device.mn).where(Device.org_id == org_id)
+                device_mns_result = await db.execute(device_mns_query)
+                device_mns = [row[0] for row in device_mns_result.fetchall()]
+
+                # Query data for each device
+                for mn in device_mns:
+                    results = await client.query_monitoring_data(
+                        device_id=mn,
+                        start_time=start_time,
+                        end_time=end_time,
+                        limit=10000
+                    )
+                    data_count += len(results)
+            else:
+                # Superadmin: query all data
+                results = await client.query_monitoring_data(
+                    start_time=start_time,
+                    end_time=end_time,
+                    limit=10000
+                )
+                data_count = len(results)
+        except Exception as e:
+            logger.warning("Failed to get data count from TDengine", error=str(e))
+
+        return DashboardStats(
+            device_count=device_count,
+            online_count=online_count,
+            offline_count=offline_count,
+            alarm_count=alarm_count,
+            data_count=data_count,
+            pending_alarms=pending_alarms
+        )
+
+    except Exception as e:
+        logger.error("Failed to get dashboard stats", error=str(e))
+        # Return empty stats on error instead of failing
+        return DashboardStats()
 
 
 @router.get("/trend")
 async def get_trend_data(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
     device_id: str | None = None,
     pollutant_code: str = Query("w01018", description="污染物代码 (默认: w01018/COD)"),
     hours: int = Query(24, ge=1, le=168),  # 1 hour to 7 days
     limit: int = Query(100, ge=1, le=1000),
 ) -> list[MonitoringDataResponse]:
     """
-    Get trend data for charts - public endpoint.
+    Get trend data for charts - requires authentication.
 
     Returns time-series data for the specified device and time range.
+    Only returns data for devices belonging to user's organization.
     """
     try:
+        # Superadmin can see all data, regular users only see their org's data
+        org_id = None if current_user.is_superadmin else current_user.org_id
+
+        # Verify device belongs to user's organization if device_id is specified (skip for superadmin)
+        if device_id and org_id:
+            device_result = await db.execute(
+                select(Device).where(Device.mn == device_id, Device.org_id == org_id)
+            )
+            if not device_result.scalar_one_or_none():
+                # Device not found or doesn't belong to user's org
+                return []
+
+        # If no device_id specified, get all device MNs for user's org (skip for superadmin)
+        allowed_device_ids = None
+        if org_id and not device_id:
+            device_mns_query = select(Device.mn).where(Device.org_id == org_id)
+            device_mns_result = await db.execute(device_mns_query)
+            allowed_device_ids = [row[0] for row in device_mns_result.fetchall()]
+            if not allowed_device_ids:
+                return []
+
         client = get_tdengine_client()
 
         # Calculate time range
@@ -107,6 +232,10 @@ async def get_trend_data(
             limit=limit
         )
 
+        # Filter results by allowed devices if needed
+        if allowed_device_ids:
+            results = [r for r in results if r['device_id'] in allowed_device_ids]
+
         # Convert results to response model
         responses = []
         for row in results:
@@ -119,7 +248,7 @@ async def get_trend_data(
                 status=row['status']
             ))
 
-        logger.info("Retrieved trend data", count=len(responses))
+        logger.info("Retrieved trend data", count=len(responses), org_id=str(org_id))
         return responses
 
     except Exception as e:
@@ -129,16 +258,31 @@ async def get_trend_data(
 
 @router.get("/device-pollutants")
 async def get_device_pollutants(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
     device_id: str = Query(..., description="设备ID"),
     hours: int = Query(24, ge=1, le=168, description="查询时间范围"),
 ) -> list[MonitoringDataResponse]:
     """
-    获取设备实际上报的所有污染物最新数据 - public endpoint.
+    获取设备实际上报的所有污染物最新数据 - requires authentication.
 
     返回设备在指定时间范围内上报的所有污染物的最新值。
     用于"设备实际"模式显示企业数采仪实际采集的指标。
+    Only returns data for devices belonging to user's organization.
     """
     try:
+        # Superadmin can see all data, regular users only see their org's data
+        org_id = None if current_user.is_superadmin else current_user.org_id
+
+        # Verify device belongs to user's organization (skip for superadmin)
+        if org_id:
+            device_result = await db.execute(
+                select(Device).where(Device.mn == device_id, Device.org_id == org_id)
+            )
+            if not device_result.scalar_one_or_none():
+                # Device not found or doesn't belong to user's org
+                return []
+
         client = get_tdengine_client()
 
         # Calculate time range
@@ -174,7 +318,7 @@ async def get_device_pollutants(
                 status=row['status']
             ))
 
-        logger.info("Retrieved device pollutants", device_id=device_id, pollutant_count=len(responses))
+        logger.info("Retrieved device pollutants", device_id=device_id, pollutant_count=len(responses), org_id=str(org_id))
         return responses
 
     except Exception as e:
@@ -184,15 +328,29 @@ async def get_device_pollutants(
 
 @router.get("/latest")
 async def get_latest_monitoring_data(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
     pollutant_code: str | None = Query(None, description="可选污染物代码过滤"),
     limit: int = Query(50, ge=1, le=200),
 ) -> list[MonitoringDataResponse]:
     """
-    Get latest monitoring data - public endpoint.
+    Get latest monitoring data - requires authentication.
 
-    Returns the most recent data points across all devices.
+    Returns the most recent data points for devices in user's organization.
     """
     try:
+        # Superadmin can see all data, regular users only see their org's data
+        org_id = None if current_user.is_superadmin else current_user.org_id
+
+        # Get device MNs for user's org (superadmin sees all)
+        allowed_device_ids = None
+        if org_id:
+            device_mns_query = select(Device.mn).where(Device.org_id == org_id)
+            device_mns_result = await db.execute(device_mns_query)
+            allowed_device_ids = [row[0] for row in device_mns_result.fetchall()]
+            if not allowed_device_ids:
+                return []
+
         client = get_tdengine_client()
 
         # Get latest values
@@ -200,6 +358,10 @@ async def get_latest_monitoring_data(
             limit=limit,
             pollutant_code=pollutant_code,
         )
+
+        # Filter by allowed devices (superadmin sees all)
+        if allowed_device_ids:
+            results = [r for r in results if r['device_id'] in allowed_device_ids]
 
         # Convert results to response model
         responses = []
@@ -213,7 +375,7 @@ async def get_latest_monitoring_data(
                 status=row['status']
             ))
 
-        logger.info("Retrieved latest data", count=len(responses))
+        logger.info("Retrieved latest data", count=len(responses), org_id=str(org_id))
         return responses
 
     except Exception as e:
@@ -223,15 +385,29 @@ async def get_latest_monitoring_data(
 
 @router.get("/realtime")
 async def get_realtime_data(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
     pollutant_code: str | None = Query(None, description="可选污染物代码过滤"),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[MonitoringDataResponse]:
     """
-    Get real-time data stream - public endpoint.
+    Get real-time data stream - requires authentication.
 
-    Returns the most recent data points for real-time display.
+    Returns the most recent data points for devices in user's organization.
     """
     try:
+        # Superadmin can see all data, regular users only see their org's data
+        org_id = None if current_user.is_superadmin else current_user.org_id
+
+        # Get device MNs for user's org (superadmin sees all)
+        allowed_device_ids = None
+        if org_id:
+            device_mns_query = select(Device.mn).where(Device.org_id == org_id)
+            device_mns_result = await db.execute(device_mns_query)
+            allowed_device_ids = [row[0] for row in device_mns_result.fetchall()]
+            if not allowed_device_ids:
+                return []
+
         client = get_tdengine_client()
 
         # Get data from last 5 minutes
@@ -245,6 +421,10 @@ async def get_realtime_data(
             limit=limit
         )
 
+        # Filter by allowed devices (superadmin sees all)
+        if allowed_device_ids:
+            results = [r for r in results if r['device_id'] in allowed_device_ids]
+
         # Convert results to response model
         responses = []
         for row in results:
@@ -257,7 +437,7 @@ async def get_realtime_data(
                 status=row['status']
             ))
 
-        logger.info("Retrieved real-time data", count=len(responses))
+        logger.info("Retrieved real-time data", count=len(responses), org_id=str(org_id))
         return responses
 
     except Exception as e:

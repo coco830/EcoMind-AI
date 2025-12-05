@@ -100,7 +100,12 @@ const handleExport = async (format: 'json' | 'csv') => {
   }
 
   try {
-    const params: Record<string, string> = {
+    const params: {
+      device_id: string
+      format: 'json' | 'csv'
+      start_time?: string
+      end_time?: string
+    } = {
       device_id: selectedDevice.value,
       format
     }

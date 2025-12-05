@@ -2,12 +2,18 @@
 数据特征提取服务
 
 为 AI 分析提供设备监测数据的统计特征，将原始时序数据转换为结构化的统计信息。
+
+主要功能：
+1. 小时级统计聚合（均值/峰值/谷值）
+2. 异常事件摘要提取（超标点、故障点、突变点）
+3. 为 AI Prompt 生成结构化输入
 """
 
 import json
 from datetime import date, datetime, timedelta
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import structlog
 from sqlalchemy import select
@@ -17,6 +23,10 @@ from app.db.tdengine_client import get_tdengine_client
 from app.models.device import Device, ThresholdConfig
 
 logger = structlog.get_logger(__name__)
+
+
+# 最大异常事件数量限制（避免 Token 爆炸）
+MAX_ANOMALY_EVENTS = 10
 
 
 class DataAnalysisService:
@@ -59,6 +69,36 @@ class DataAnalysisService:
         except Exception as e:
             logger.warning("Failed to get device thresholds", device_id=device_id, error=str(e))
             return None
+
+    async def get_device_industry_info(self, device_id: str) -> dict[str, str | None]:
+        """
+        获取设备的行业信息。
+
+        Args:
+            device_id: 设备 ID 或 MN 号
+
+        Returns:
+            包含 industry_type 和 national_standard 的字典
+        """
+        if not self.db_session:
+            return {"industry_type": None, "national_standard": None}
+
+        try:
+            stmt = select(Device).where(
+                (Device.id == device_id) | (Device.mn == device_id)
+            )
+            result = await self.db_session.execute(stmt)
+            device = result.scalar_one_or_none()
+
+            if device:
+                return {
+                    "industry_type": device.industry_type,
+                    "national_standard": device.national_standard,
+                }
+            return {"industry_type": None, "national_standard": None}
+        except Exception as e:
+            logger.warning("Failed to get device industry info", device_id=device_id, error=str(e))
+            return {"industry_type": None, "national_standard": None}
 
     async def analyze_device_daily_stats(
         self,
@@ -148,6 +188,174 @@ class DataAnalysisService:
 
         return result
 
+    def _calculate_hourly_stats(
+        self,
+        df: pd.DataFrame,
+        pollutant_code: str,
+    ) -> list[dict[str, Any]]:
+        """
+        计算小时级统计数据（均值/峰值/谷值）。
+
+        Args:
+            df: 该污染物的数据 DataFrame（需包含 ts 和 value 列）
+            pollutant_code: 污染物代码
+
+        Returns:
+            小时级统计列表，每项包含 hour, mean, max, min
+        """
+        if df.empty:
+            return []
+
+        df_copy = df.copy()
+        df_copy["ts"] = pd.to_datetime(df_copy["ts"])
+        df_copy = df_copy.set_index("ts")
+
+        # 按小时重采样，计算 mean/max/min
+        hourly = df_copy["value"].resample("H").agg(["mean", "max", "min"])
+        hourly = hourly.dropna()
+
+        result = []
+        for ts, row in hourly.iterrows():
+            result.append({
+                "hour": ts.strftime("%H:00"),
+                "mean": round(float(row["mean"]), 2),
+                "max": round(float(row["max"]), 2),
+                "min": round(float(row["min"]), 2),
+            })
+
+        return result
+
+    def _extract_anomaly_events(
+        self,
+        df: pd.DataFrame,
+        pollutant_code: str,
+        threshold_value: float | None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """
+        提取异常事件摘要。
+
+        提取以下类型的异常：
+        1. 超标点：数值超过设备阈值的数据点
+        2. 故障点：flag 为 'D' (故障) 或 'M' (维护) 的时间段
+        3. 突变点：is_anomaly=True 标记的 AI 异常检测点
+
+        Args:
+            df: 该污染物的数据 DataFrame
+            pollutant_code: 污染物代码
+            threshold_value: 报警阈值
+
+        Returns:
+            异常事件摘要字典，包含 exceed_events, fault_events, anomaly_events
+        """
+        events = {
+            "exceed_events": [],  # 超标点
+            "fault_events": [],   # 故障/维护点
+            "anomaly_events": [], # AI 突变点
+        }
+
+        if df.empty:
+            return events
+
+        df_copy = df.copy()
+        df_copy["ts"] = pd.to_datetime(df_copy["ts"])
+
+        # 1. 提取超标点
+        if threshold_value and threshold_value > 0:
+            exceed_mask = df_copy["value"] > threshold_value
+            exceed_df = df_copy[exceed_mask].copy()
+
+            if not exceed_df.empty:
+                # 按数值排序，取最严重的前 N 个
+                exceed_df = exceed_df.sort_values("value", ascending=False)
+                for _, row in exceed_df.head(MAX_ANOMALY_EVENTS).iterrows():
+                    events["exceed_events"].append({
+                        "time": row["ts"].strftime("%H:%M"),
+                        "value": round(float(row["value"]), 2),
+                        "exceed_rate": round((float(row["value"]) - threshold_value) / threshold_value * 100, 1),
+                    })
+
+        # 2. 提取故障/维护点（flag = 'D' 或 'M'）
+        if "flag" in df_copy.columns:
+            fault_mask = df_copy["flag"].isin(["D", "M", "F"])
+            fault_df = df_copy[fault_mask].copy()
+
+            if not fault_df.empty:
+                # 合并连续的故障时段
+                fault_periods = self._merge_continuous_periods(fault_df, "flag")
+                events["fault_events"] = fault_periods[:MAX_ANOMALY_EVENTS]
+
+        # 3. 提取 AI 突变点（is_anomaly = True）
+        if "is_anomaly" in df_copy.columns:
+            anomaly_mask = df_copy["is_anomaly"] == True
+            anomaly_df = df_copy[anomaly_mask].copy()
+
+            if not anomaly_df.empty:
+                # 按数值排序，取最异常的前 N 个
+                anomaly_df = anomaly_df.sort_values("value", ascending=False)
+                for _, row in anomaly_df.head(MAX_ANOMALY_EVENTS).iterrows():
+                    events["anomaly_events"].append({
+                        "time": row["ts"].strftime("%H:%M"),
+                        "value": round(float(row["value"]), 2),
+                        "type": "AI检测异常",
+                    })
+
+        return events
+
+    def _merge_continuous_periods(
+        self,
+        df: pd.DataFrame,
+        flag_col: str,
+    ) -> list[dict[str, Any]]:
+        """
+        合并连续的时间段（用于故障/维护事件）。
+
+        Args:
+            df: 故障数据 DataFrame
+            flag_col: 标志位列名
+
+        Returns:
+            合并后的时间段列表
+        """
+        if df.empty:
+            return []
+
+        df_sorted = df.sort_values("ts")
+        periods = []
+        current_start = None
+        current_end = None
+        current_flag = None
+
+        for _, row in df_sorted.iterrows():
+            if current_start is None:
+                current_start = row["ts"]
+                current_end = row["ts"]
+                current_flag = row[flag_col]
+            elif (row["ts"] - current_end).total_seconds() <= 300 and row[flag_col] == current_flag:
+                # 5分钟内的同类故障视为连续
+                current_end = row["ts"]
+            else:
+                # 保存当前时段，开始新时段
+                periods.append({
+                    "start": current_start.strftime("%H:%M"),
+                    "end": current_end.strftime("%H:%M"),
+                    "flag": current_flag,
+                    "type": "故障" if current_flag == "D" else ("维护" if current_flag == "M" else "异常标志"),
+                })
+                current_start = row["ts"]
+                current_end = row["ts"]
+                current_flag = row[flag_col]
+
+        # 保存最后一个时段
+        if current_start is not None:
+            periods.append({
+                "start": current_start.strftime("%H:%M"),
+                "end": current_end.strftime("%H:%M"),
+                "flag": current_flag,
+                "type": "故障" if current_flag == "D" else ("维护" if current_flag == "M" else "异常标志"),
+            })
+
+        return periods
+
     def _calculate_pollutant_stats(
         self,
         df: pd.DataFrame,
@@ -214,6 +422,12 @@ class DataAnalysisService:
             threshold_value=threshold_value,
         )
 
+        # 小时级统计聚合
+        hourly_stats = self._calculate_hourly_stats(df, pollutant_code)
+
+        # 异常事件摘要
+        anomaly_events = self._extract_anomaly_events(df, pollutant_code, threshold_value)
+
         return {
             "pollutant_code": pollutant_code,
             "avg_val": round(avg_val, 4),
@@ -231,6 +445,10 @@ class DataAnalysisService:
                 "night_avg": round(night_avg, 4) if night_avg else None,
             },
             "trend_description": trend_description,
+            # 新增：小时级统计
+            "hourly_stats": hourly_stats,
+            # 新增：异常事件摘要
+            "anomaly_events": anomaly_events,
         }
 
     def _generate_trend_description(
@@ -354,6 +572,118 @@ class DataAnalysisService:
             summary_parts.append(f"需重点关注：{', '.join(codes)}")
 
         return "；".join(summary_parts)
+
+    def format_hourly_stats_for_prompt(
+        self,
+        pollutant_stats: list[dict[str, Any]],
+        pollutant_names: dict[str, str] | None = None,
+    ) -> str:
+        """
+        格式化小时级统计数据为 AI Prompt 友好的文本格式。
+
+        输出格式示例：
+        14:00, COD: 均值50/峰值200/谷值20
+        15:00, COD: 均值48/峰值180/谷值22
+
+        Args:
+            pollutant_stats: 各污染物的统计数据列表
+            pollutant_names: 污染物代码到名称的映射
+
+        Returns:
+            格式化的小时级统计文本
+        """
+        if not pollutant_stats:
+            return "无小时统计数据"
+
+        lines = []
+        for p_stat in pollutant_stats:
+            code = p_stat["pollutant_code"]
+            name = pollutant_names.get(code, code) if pollutant_names else code
+            hourly = p_stat.get("hourly_stats", [])
+
+            if not hourly:
+                continue
+
+            for h in hourly:
+                line = f"{h['hour']}, {name}: 均值{h['mean']}/峰值{h['max']}/谷值{h['min']}"
+                lines.append(line)
+
+        return "\n".join(lines) if lines else "无小时统计数据"
+
+    def format_anomaly_events_for_prompt(
+        self,
+        pollutant_stats: list[dict[str, Any]],
+        pollutant_names: dict[str, str] | None = None,
+    ) -> str:
+        """
+        格式化异常事件摘要为 AI Prompt 友好的文本格式。
+
+        输出格式：
+        【异常事件摘要】
+        - 超标事件：
+          * 14:35 COD 达到 200mg/L（超标 100%）
+        - 故障事件：
+          * 08:00-08:15 设备故障
+        - AI 突变点：
+          * 16:22 氨氮 检测到异常波动
+
+        Args:
+            pollutant_stats: 各污染物的统计数据列表
+            pollutant_names: 污染物代码到名称的映射
+
+        Returns:
+            格式化的异常事件摘要文本
+        """
+        if not pollutant_stats:
+            return ""
+
+        exceed_lines = []
+        fault_lines = []
+        anomaly_lines = []
+
+        for p_stat in pollutant_stats:
+            code = p_stat["pollutant_code"]
+            name = pollutant_names.get(code, code) if pollutant_names else code
+            events = p_stat.get("anomaly_events", {})
+
+            # 超标事件
+            for e in events.get("exceed_events", []):
+                exceed_lines.append(
+                    f"  * {e['time']} {name} 达到 {e['value']}（超标 {e['exceed_rate']}%）"
+                )
+
+            # 故障事件
+            for e in events.get("fault_events", []):
+                fault_lines.append(
+                    f"  * {e['start']}-{e['end']} {e['type']}"
+                )
+
+            # AI 突变点
+            for e in events.get("anomaly_events", []):
+                anomaly_lines.append(
+                    f"  * {e['time']} {name} {e['type']}，数值 {e['value']}"
+                )
+
+        # 如果没有任何异常事件
+        if not exceed_lines and not fault_lines and not anomaly_lines:
+            return "【异常事件摘要】\n无异常事件"
+
+        # 组装输出
+        sections = ["【异常事件摘要】"]
+
+        if exceed_lines:
+            sections.append("- 超标事件：")
+            sections.extend(exceed_lines[:MAX_ANOMALY_EVENTS])
+
+        if fault_lines:
+            sections.append("- 故障/维护事件：")
+            sections.extend(fault_lines[:MAX_ANOMALY_EVENTS])
+
+        if anomaly_lines:
+            sections.append("- AI 突变点：")
+            sections.extend(anomaly_lines[:MAX_ANOMALY_EVENTS])
+
+        return "\n".join(sections)
 
 
 # 便捷函数：直接使用，无需实例化

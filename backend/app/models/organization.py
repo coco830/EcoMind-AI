@@ -34,6 +34,7 @@ class Organization(Base):
     # Relationships
     users: Mapped[list["User"]] = relationship(back_populates="organization")
     devices: Mapped[list["Device"]] = relationship(back_populates="organization")
+    invitation_codes: Mapped[list["InvitationCode"]] = relationship(back_populates="organization")
 
 
 class OrganizationCreate(BaseSchema):
@@ -62,3 +63,4 @@ class OrganizationResponse(BaseSchema):
 # Import for type hints
 from app.models.user import User
 from app.models.device import Device
+from app.models.invitation import InvitationCode

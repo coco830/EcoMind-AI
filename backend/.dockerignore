@@ -1,0 +1,62 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+env
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+
+# Logs
+logs
+*.log
+lightning_logs
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build
+dist
+build
+*.egg-info
+
+# Large files
+*.tar.gz
+*.zip
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Tests (optional for production)
+tests
+
+# Misc
+.DS_Store
+Thumbs.db

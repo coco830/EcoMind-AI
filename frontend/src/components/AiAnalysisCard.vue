@@ -10,9 +10,6 @@ const props = defineProps<{
   pollutant?: string  // Optional - if not provided, use comprehensive analysis
 }>()
 
-// Computed analysis mode
-const isComprehensiveMode = computed(() => !props.pollutant)
-
 // State
 const analysisResult = ref('')
 const isLoading = ref(false)

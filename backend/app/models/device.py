@@ -32,6 +32,76 @@ class DeviceType(str, Enum):
     SOIL = "soil"  # 土壤监测
 
 
+class IndustryType(str, Enum):
+    """Industry type enumeration - 行业类型枚举."""
+
+    MUNICIPAL_WASTEWATER = "municipal_wastewater"  # 城镇污水处理厂
+    ELECTROPLATING = "electroplating"  # 电镀工业
+    TEXTILE_DYEING = "textile_dyeing"  # 纺织染整工业
+    THERMAL_POWER = "thermal_power"  # 火电厂
+    PHARMACEUTICAL = "pharmaceutical"  # 制药工业
+    PAPER_MAKING = "paper_making"  # 造纸工业
+    PETROCHEMICAL = "petrochemical"  # 石油化工
+    STEEL = "steel"  # 钢铁工业
+    CEMENT = "cement"  # 水泥工业
+    OTHER = "other"  # 其他（通用标准）
+
+
+# 行业类型与执行标准映射
+INDUSTRY_STANDARD_MAP: dict[str, dict[str, str]] = {
+    "municipal_wastewater": {
+        "name": "城镇污水处理厂",
+        "standard": "GB 18918-2002",
+        "standard_name": "城镇污水处理厂污染物排放标准",
+    },
+    "electroplating": {
+        "name": "电镀工业",
+        "standard": "GB 21900-2008",
+        "standard_name": "电镀污染物排放标准",
+    },
+    "textile_dyeing": {
+        "name": "纺织染整工业",
+        "standard": "GB 4287-2012",
+        "standard_name": "纺织染整工业水污染物排放标准",
+    },
+    "thermal_power": {
+        "name": "火电厂",
+        "standard": "GB 13223-2011",
+        "standard_name": "火电厂大气污染物排放标准",
+    },
+    "pharmaceutical": {
+        "name": "制药工业",
+        "standard": "GB 21903-2008",
+        "standard_name": "制药工业水污染物排放标准",
+    },
+    "paper_making": {
+        "name": "造纸工业",
+        "standard": "GB 3544-2008",
+        "standard_name": "制浆造纸工业水污染物排放标准",
+    },
+    "petrochemical": {
+        "name": "石油化工",
+        "standard": "GB 31571-2015",
+        "standard_name": "石油化学工业污染物排放标准",
+    },
+    "steel": {
+        "name": "钢铁工业",
+        "standard": "GB 13456-2012",
+        "standard_name": "钢铁工业水污染物排放标准",
+    },
+    "cement": {
+        "name": "水泥工业",
+        "standard": "GB 4915-2013",
+        "standard_name": "水泥工业大气污染物排放标准",
+    },
+    "other": {
+        "name": "其他",
+        "standard": "GB 8978-1996",
+        "standard_name": "污水综合排放标准",
+    },
+}
+
+
 class Device(Base):
     """Device ORM model."""
 
@@ -61,6 +131,9 @@ class Device(Base):
     org_id: Mapped[UUID] = mapped_column(
         GUID, ForeignKey("organizations.id"), nullable=False
     )
+    # 行业类型和执行标准
+    industry_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    national_standard: Mapped[str | None] = mapped_column(String(128), nullable=True)
     latitude: Mapped[float | None] = mapped_column(Float)
     longitude: Mapped[float | None] = mapped_column(Float)
     address: Mapped[str | None] = mapped_column(String(512))
@@ -77,6 +150,7 @@ class Device(Base):
     # Relationships
     organization: Mapped["Organization"] = relationship(back_populates="devices")
     alarms: Mapped[list["Alarm"]] = relationship(back_populates="device")
+    daily_reports: Mapped[list["DailyReport"]] = relationship(back_populates="device")
 
 
 class PollutantThreshold(BaseModel):
@@ -110,6 +184,8 @@ class DeviceCreate(BaseSchema):
     name: str = Field(..., min_length=1, max_length=128)
     device_type: DeviceType
     org_id: UUID | None = Field(None, description="组织ID，如不提供则使用当前用户的组织")
+    industry_type: IndustryType | None = Field(None, description="行业类型")
+    national_standard: str | None = Field(None, max_length=128, description="执行标准号，如 GB 18918-2002")
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
     address: str | None = Field(None, max_length=512)
@@ -126,6 +202,8 @@ class DeviceResponse(BaseSchema):
     device_type: DeviceType
     status: DeviceStatus
     org_id: UUID
+    industry_type: IndustryType | None = None
+    national_standard: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     address: str | None = None
@@ -139,3 +217,4 @@ class DeviceResponse(BaseSchema):
 # Import for type hints
 from app.models.organization import Organization
 from app.models.alarm import Alarm
+from app.models.daily_report import DailyReport

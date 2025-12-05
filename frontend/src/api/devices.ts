@@ -13,6 +13,27 @@ export interface ThresholdConfig {
   pollutants: PollutantThreshold[]
 }
 
+// 行业类型枚举
+export type IndustryType =
+  | 'municipal_wastewater'  // 城镇污水处理厂
+  | 'electroplating'        // 电镀工业
+  | 'textile_dyeing'        // 纺织染整工业
+  | 'thermal_power'         // 火电厂
+  | 'pharmaceutical'        // 制药工业
+  | 'paper_making'          // 造纸工业
+  | 'petrochemical'         // 石油化工
+  | 'steel'                 // 钢铁工业
+  | 'cement'                // 水泥工业
+  | 'other'                 // 其他
+
+// 行业类型信息接口
+export interface IndustryTypeInfo {
+  code: IndustryType
+  name: string
+  standard: string
+  standard_name: string
+}
+
 export interface Device {
   id: string
   mn: string
@@ -20,6 +41,8 @@ export interface Device {
   device_type: 'water' | 'air' | 'noise' | 'soil'
   status: 'online' | 'offline' | 'alarm' | 'maintenance'
   org_id: string
+  industry_type: IndustryType | null
+  national_standard: string | null
   latitude: number | null
   longitude: number | null
   address: string | null
@@ -35,6 +58,8 @@ export interface DeviceCreate {
   name: string
   device_type: 'water' | 'air' | 'noise' | 'soil'
   org_id?: string  // 可选，不传则使用当前用户的组织
+  industry_type?: IndustryType  // 行业类型
+  national_standard?: string    // 执行标准号
   latitude?: number
   longitude?: number
   address?: string
@@ -103,5 +128,9 @@ export const deviceApi = {
 
   getStats(): Promise<DeviceStats> {
     return request.get('/devices/stats/summary')
+  },
+
+  getIndustryTypes(): Promise<IndustryTypeInfo[]> {
+    return request.get('/devices/industry-types')
   }
 }

@@ -26,6 +26,9 @@ from typing import Optional
 
 import pytest
 import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -231,7 +234,7 @@ class TestTCPGatewayIntegration:
                 except socket.timeout:
                     return None
         except Exception as e:
-            print(f"TCP error: {e}")
+            logger.error("TCP error", error=str(e))
             return None
 
     @pytest.mark.asyncio
@@ -264,25 +267,24 @@ class TestTCPGatewayIntegration:
             f"w01018-Rtd={test_value},w01018-Flag=N&&ABCD\r\n"
         ).encode()
 
-        print(f"\n=== E2E Test: TCP -> TDengine -> API ===")
-        print(f"Test Device ID: {test_device_id}")
-        print(f"Test Value: {test_value}")
-        print(f"Packet: {packet[:100]}...")
+        logger.info("E2E Test: TCP -> TDengine -> API",
+                    device_id=test_device_id, test_value=test_value,
+                    packet_preview=packet[:100].decode())
 
         # Step 1: Send TCP packet to Gateway
-        print(f"\n1. Sending TCP packet to {tcp_host}:{tcp_port}...")
+        logger.info("Sending TCP packet", host=tcp_host, port=tcp_port)
         response = self.send_tcp_packet(tcp_host, tcp_port, packet)
 
         if response:
-            print(f"   Received response: {response}")
+            logger.info("Received response", response=response)
         else:
-            print("   No response (this is OK for some packet types)")
+            logger.info("No response (this is OK for some packet types)")
 
         # Wait for data to be processed
         await asyncio.sleep(1)
 
         # Step 2: Query data from TDengine directly
-        print("\n2. Querying TDengine directly...")
+        logger.info("Querying TDengine directly")
         client = get_tdengine_client()
         await client.connect()
 
@@ -292,14 +294,12 @@ class TestTCPGatewayIntegration:
         )
 
         if results:
-            print(f"   Found {len(results)} records in TDengine")
-            for r in results[:3]:
-                print(f"   - {r}")
+            logger.info("Found records in TDengine", count=len(results), sample=results[:3])
         else:
-            print("   No records found (Gateway may not be running)")
+            logger.info("No records found (Gateway may not be running)")
 
         # Step 3: Query via API (requires authentication)
-        print(f"\n3. Querying API at http://{api_host}:{api_port}...")
+        logger.info("Querying API", host=api_host, port=api_port)
 
         async with httpx.AsyncClient() as http_client:
             try:
@@ -324,42 +324,35 @@ class TestTCPGatewayIntegration:
 
                     if data_resp.status_code == 200:
                         api_data = data_resp.json()
-                        print(f"   API returned {len(api_data)} records")
-                        for item in api_data[:3]:
-                            print(f"   - {item}")
+                        logger.info("API returned records", count=len(api_data), sample=api_data[:3])
                     else:
-                        print(f"   API query failed: {data_resp.status_code}")
+                        logger.warning("API query failed", status_code=data_resp.status_code)
                 else:
-                    print(f"   Login failed: {login_resp.status_code}")
+                    logger.warning("Login failed", status_code=login_resp.status_code)
 
             except Exception as e:
-                print(f"   API error: {e}")
+                logger.error("API error", error=str(e))
 
-        print("\n=== E2E Test Complete ===")
+        logger.info("E2E Test Complete")
 
 
 async def run_quick_test():
     """Run a quick connection test."""
-    print("=" * 60)
-    print("EcoMind-AI TDengine Connection Test")
-    print("=" * 60)
+    logger.info("EcoMind-AI TDengine Connection Test")
 
     client = get_tdengine_client()
 
-    print(f"\nConnecting to TDengine...")
-    print(f"  Host: {client.host}")
-    print(f"  Port: {client.port}")
-    print(f"  Database: {client.database}")
+    logger.info("Connecting to TDengine", host=client.host, port=client.port, database=client.database)
 
     try:
         await client.connect()
-        print("  Status: Connected!")
+        logger.info("Connected to TDengine")
 
-        print("\nInitializing database...")
+        logger.info("Initializing database")
         await client.init_database()
-        print("  Status: Database ready!")
+        logger.info("Database ready")
 
-        print("\nInserting test data...")
+        logger.info("Inserting test data")
         test_device = f"QUICKTEST{int(time.time()) % 10000:04d}"
         success = await client.insert_monitoring_data(
             device_id=test_device,
@@ -370,27 +363,22 @@ async def run_quick_test():
             flag="N",
             status=0
         )
-        print(f"  Insert result: {'Success' if success else 'Failed'}")
+        logger.info("Insert result", success=success)
 
-        print("\nQuerying data...")
+        logger.info("Querying data")
         results = await client.query_monitoring_data(
             device_id=test_device,
             limit=5
         )
-        print(f"  Found {len(results)} records")
-        for r in results:
-            print(f"    {r}")
+        logger.info("Query results", count=len(results), records=results)
 
-        print("\n" + "=" * 60)
-        print("All tests passed! TDengine integration is working.")
-        print("=" * 60)
+        logger.info("All tests passed! TDengine integration is working.")
 
     except Exception as e:
-        print(f"\nError: {e}")
-        print("\nTroubleshooting:")
-        print("1. Make sure TDengine is running: docker-compose up -d tdengine")
-        print("2. Check TDengine logs: docker logs ecomind-tdengine")
-        print("3. Verify network connectivity: telnet localhost 6030")
+        logger.error("TDengine test failed", error=str(e))
+        logger.info("Troubleshooting: 1. Make sure TDengine is running: docker-compose up -d tdengine")
+        logger.info("Troubleshooting: 2. Check TDengine logs: docker logs ecomind-tdengine")
+        logger.info("Troubleshooting: 3. Verify network connectivity: telnet localhost 6030")
         raise
 
     finally:

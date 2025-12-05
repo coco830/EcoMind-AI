@@ -45,14 +45,37 @@ class GUID(TypeDecorator):
 settings = get_settings()
 
 # Configure engine based on database type
-db_url = settings.postgres_url
+# Priority: DATABASE_URL env var > mysql_url (if mysql_password set) > postgres_url > sqlite
+db_url = settings.database_url
+if db_url.startswith("mysql"):
+    # Already a MySQL URL from DATABASE_URL
+    pass
+elif settings.mysql_password:
+    # MySQL configured via separate env vars
+    db_url = settings.mysql_url
+elif settings.postgres_password:
+    # PostgreSQL configured
+    db_url = settings.postgres_url
+# else: use default sqlite from database_url
+
 is_sqlite = db_url.startswith("sqlite")
+is_mysql = db_url.startswith("mysql")
 
 if is_sqlite:
     # SQLite doesn't support pool parameters
     engine = create_async_engine(
         db_url,
         echo=settings.debug,
+    )
+elif is_mysql:
+    # MySQL with connection pooling
+    engine = create_async_engine(
+        db_url,
+        echo=settings.debug,
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True,
+        pool_recycle=3600,  # Recycle connections after 1 hour
     )
 else:
     # PostgreSQL with connection pooling
@@ -144,6 +167,34 @@ async def _ensure_alarm_sms_columns() -> None:
                 await conn.exec_driver_sql(
                     "ALTER TABLE alarms ADD COLUMN last_sms_time DATETIME NULL"
                 )
+        elif is_mysql:
+            result = await conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name='alarms' AND table_schema=DATABASE()"
+                )
+            )
+            columns = {row[0] for row in result}
+            if "sms_sent_count" not in columns:
+                try:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE alarms ADD COLUMN "
+                            "sms_sent_count INTEGER NOT NULL DEFAULT 0"
+                        )
+                    )
+                except Exception:
+                    pass  # Column might already exist
+            if "last_sms_time" not in columns:
+                try:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE alarms ADD COLUMN "
+                            "last_sms_time DATETIME NULL"
+                        )
+                    )
+                except Exception:
+                    pass
         else:
             result = await conn.execute(
                 text(

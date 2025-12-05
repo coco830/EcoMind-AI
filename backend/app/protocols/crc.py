@@ -80,18 +80,3 @@ def append_crc(data: bytes) -> bytes:
     return data + crc_hex.encode('ascii')
 
 
-# Test the implementation with known values
-if __name__ == "__main__":
-    # Example test data
-    test_data = b"QN=20240101120000000;ST=31;CN=2011;MN=123456789012345678901234;Flag=5;CP=&&w01001-Rtd=7.5,w01001-Flag=N&&"
-
-    crc = calculate_crc16(test_data)
-    crc_hex = crc16_to_hex(crc)
-
-    print(f"Test Data: {test_data.decode('ascii')}")
-    print(f"CRC16 (int): {crc}")
-    print(f"CRC16 (hex): {crc_hex}")
-
-    # Verify CRC
-    is_valid = verify_crc(test_data, crc_hex)
-    print(f"CRC Verification: {is_valid}")

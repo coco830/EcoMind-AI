@@ -59,6 +59,7 @@ class UserCreate(BaseSchema):
     full_name: str | None = Field(None, max_length=128)
     role: UserRole = UserRole.OPERATOR  # Changed from VIEWER to OPERATOR for new users
     org_id: UUID | None = None
+    invitation_code: str | None = Field(None, description="邀请码（公开注册必填）")
 
 
 class UserInDB(BaseSchema):

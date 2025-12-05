@@ -2,8 +2,11 @@ import axios from 'axios'
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
 
+// 生产环境使用完整 API URL，开发环境使用代理
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || ''
+
 const instance: AxiosInstance = axios.create({
-  baseURL: '/api/v1',
+  baseURL: `${apiBaseUrl}/api/v1`,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json'
@@ -34,7 +37,9 @@ instance.interceptors.response.use(
 
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
-      window.location.href = '/login'
+      // 使用 hash 模式路由
+      const basePath = import.meta.env.BASE_URL || '/'
+      window.location.href = `${basePath}#/login`
     } else {
       ElMessage.error(message)
     }

@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { LMap, LTileLayer, LMarker, LPopup, LIcon } from '@vue-leaflet/vue-leaflet'
-import 'leaflet/dist/leaflet.css'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import AMapLoader from '@amap/amap-jsapi-loader'
 import type { Device } from '@/api/devices'
 
 interface Props {
@@ -19,10 +18,18 @@ const emit = defineEmits<{
   (e: 'device-click', device: Device): void
 }>()
 
-// Map ref and state
-const mapRef = ref<InstanceType<typeof LMap> | null>(null)
-const center = ref<[number, number]>([30.5, 114.4]) // Default to Wuhan
-const zoom = ref(10)
+// Map container ref
+const mapContainer = ref<HTMLDivElement | null>(null)
+
+// Map instance and markers
+let map: any = null
+let markers: any[] = []
+let infoWindow: any = null
+let AMap: any = null
+
+// Map initialization state
+const mapReady = ref(false)
+const mapError = ref<string | null>(null)
 
 // Devices with valid coordinates
 const validDevices = computed(() => {
@@ -30,29 +37,6 @@ const validDevices = computed(() => {
     d => d.latitude !== null && d.longitude !== null
   )
 })
-
-// Calculate map bounds based on devices
-const updateMapCenter = () => {
-  if (validDevices.value.length === 0) return
-
-  const lats = validDevices.value.map(d => d.latitude!)
-  const lngs = validDevices.value.map(d => d.longitude!)
-
-  const avgLat = lats.reduce((a, b) => a + b, 0) / lats.length
-  const avgLng = lngs.reduce((a, b) => a + b, 0) / lngs.length
-
-  center.value = [avgLat, avgLng]
-
-  // Adjust zoom based on spread
-  const latSpread = Math.max(...lats) - Math.min(...lats)
-  const lngSpread = Math.max(...lngs) - Math.min(...lngs)
-  const spread = Math.max(latSpread, lngSpread)
-
-  if (spread > 5) zoom.value = 6
-  else if (spread > 2) zoom.value = 8
-  else if (spread > 0.5) zoom.value = 10
-  else zoom.value = 12
-}
 
 // Get marker color based on device status
 const getMarkerColor = (status: string): string => {
@@ -74,15 +58,15 @@ const getMarkerColor = (status: string): string => {
 const getStatusText = (status: string): string => {
   switch (status) {
     case 'online':
-      return 'online'
+      return '在线'
     case 'alarm':
-      return 'alarm'
+      return '告警'
     case 'offline':
-      return 'offline'
+      return '离线'
     case 'maintenance':
-      return 'maintenance'
+      return '维护中'
     default:
-      return 'unknown'
+      return '未知'
   }
 }
 
@@ -90,134 +74,267 @@ const getStatusText = (status: string): string => {
 const getDeviceTypeText = (type: string): string => {
   switch (type) {
     case 'water':
-      return 'water'
+      return '水质监测'
     case 'air':
-      return 'air'
+      return '空气监测'
     case 'noise':
-      return 'noise'
+      return '噪声监测'
     case 'soil':
-      return 'soil'
+      return '土壤监测'
     default:
       return type
   }
 }
 
-// Create custom icon SVG
-const createMarkerIcon = (color: string) => {
-  return `data:image/svg+xml,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="24" height="36">
-      <path fill="${color}" stroke="#fff" stroke-width="1" d="M12 0C5.4 0 0 5.4 0 12c0 9 12 24 12 24s12-15 12-24c0-6.6-5.4-12-12-12z"/>
-      <circle fill="#fff" cx="12" cy="12" r="5"/>
-    </svg>
-  `)}`
+// Create custom marker content
+const createMarkerContent = (color: string): string => {
+  return `
+    <div style="
+      width: 28px;
+      height: 38px;
+      position: relative;
+      cursor: pointer;
+    ">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="28" height="38">
+        <path fill="${color}" stroke="#fff" stroke-width="1.5" d="M12 0C5.4 0 0 5.4 0 12c0 9 12 24 12 24s12-15 12-24c0-6.6-5.4-12-12-12z"/>
+        <circle fill="#fff" cx="12" cy="12" r="5"/>
+      </svg>
+    </div>
+  `
 }
 
-const handleMarkerClick = (device: Device) => {
-  emit('device-click', device)
+// Create info window content
+const createInfoWindowContent = (device: Device): string => {
+  const statusColor = getMarkerColor(device.status)
+  const statusText = getStatusText(device.status)
+  const typeText = getDeviceTypeText(device.device_type)
+
+  return `
+    <div style="min-width: 220px; padding: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee;">
+        <span style="font-weight: 600; font-size: 15px; color: #333;">${device.name}</span>
+        <span style="
+          background: ${statusColor};
+          color: #fff;
+          padding: 2px 8px;
+          border-radius: 10px;
+          font-size: 11px;
+          font-weight: 500;
+        ">${statusText}</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
+        <div style="display: flex;">
+          <span style="color: #909399; width: 60px; flex-shrink: 0;">MN号:</span>
+          <span style="color: #333; word-break: break-all;">${device.mn}</span>
+        </div>
+        <div style="display: flex;">
+          <span style="color: #909399; width: 60px; flex-shrink: 0;">类型:</span>
+          <span style="color: #333;">${typeText}</span>
+        </div>
+        ${device.address ? `
+        <div style="display: flex;">
+          <span style="color: #909399; width: 60px; flex-shrink: 0;">地址:</span>
+          <span style="color: #333; word-break: break-all;">${device.address}</span>
+        </div>
+        ` : ''}
+        ${device.last_heartbeat ? `
+        <div style="display: flex;">
+          <span style="color: #909399; width: 60px; flex-shrink: 0;">最后活动:</span>
+          <span style="color: #333;">${new Date(device.last_heartbeat).toLocaleString('zh-CN')}</span>
+        </div>
+        ` : ''}
+      </div>
+    </div>
+  `
 }
 
-watch(() => props.devices, updateMapCenter, { immediate: true })
+// Initialize AMap
+const initMap = async () => {
+  if (!mapContainer.value) return
 
+  try {
+    mapError.value = null
+
+    // Get AMap config from environment variables
+    const amapKey = import.meta.env.VITE_AMAP_KEY
+    const amapSecurityCode = import.meta.env.VITE_AMAP_SECURITY_CODE
+
+    if (!amapKey || !amapSecurityCode) {
+      throw new Error('高德地图配置缺失，请检查环境变量')
+    }
+
+    // Set security config
+    ;(window as any)._AMapSecurityConfig = {
+      securityJsCode: amapSecurityCode
+    }
+
+    // Load AMap
+    AMap = await AMapLoader.load({
+      key: amapKey,
+      version: '2.0',
+      plugins: ['AMap.Scale', 'AMap.ToolBar']
+    })
+
+    // Default center (Wuhan)
+    const defaultCenter = [114.4, 30.5]
+
+    // Create map instance
+    map = new AMap.Map(mapContainer.value, {
+      zoom: 10,
+      center: defaultCenter,
+      viewMode: '2D',
+      mapStyle: 'amap://styles/whitesmoke'
+    })
+
+    // Add controls
+    map.addControl(new AMap.Scale())
+    map.addControl(new AMap.ToolBar({
+      position: 'RB'
+    }))
+
+    // Create info window
+    infoWindow = new AMap.InfoWindow({
+      isCustom: true,
+      autoMove: true,
+      offset: new AMap.Pixel(0, -40)
+    })
+
+    mapReady.value = true
+
+    // Update markers if devices are already available
+    await nextTick()
+    updateMarkers()
+
+  } catch (error) {
+    console.error('Failed to load AMap:', error)
+    mapError.value = '地图加载失败，请刷新重试'
+  }
+}
+
+// Update markers on the map
+const updateMarkers = () => {
+  if (!map || !AMap || !mapReady.value) return
+
+  // Clear existing markers
+  markers.forEach(marker => {
+    marker.setMap(null)
+  })
+  markers = []
+
+  // Add new markers
+  validDevices.value.forEach(device => {
+    const color = getMarkerColor(device.status)
+
+    // Create marker
+    const marker = new AMap.Marker({
+      position: new AMap.LngLat(device.longitude!, device.latitude!),
+      content: createMarkerContent(color),
+      offset: new AMap.Pixel(-14, -38),
+      extData: device
+    })
+
+    // Add click event
+    marker.on('click', () => {
+      // Show info window
+      infoWindow.setContent(createInfoWindowContent(device))
+      infoWindow.open(map, marker.getPosition())
+
+      // Emit device click event
+      emit('device-click', device)
+    })
+
+    markers.push(marker)
+    marker.setMap(map)
+  })
+
+  // Fit view to show all markers
+  if (validDevices.value.length > 0) {
+    setTimeout(() => {
+      if (validDevices.value.length === 1) {
+        map.setCenter([validDevices.value[0].longitude!, validDevices.value[0].latitude!])
+        map.setZoom(14)
+      } else if (markers.length > 1) {
+        map.setFitView(markers, false, [50, 50, 50, 50])
+      }
+    }, 100)
+  }
+}
+
+// Watch for device changes
+watch(() => props.devices, () => {
+  updateMarkers()
+}, { deep: true })
+
+// Lifecycle hooks
 onMounted(() => {
-  updateMapCenter()
+  initMap()
+})
+
+onUnmounted(() => {
+  // Clean up
+  if (infoWindow) {
+    infoWindow.close()
+  }
+  markers.forEach(marker => {
+    marker.setMap(null)
+  })
+  markers = []
+  if (map) {
+    map.destroy()
+    map = null
+  }
 })
 </script>
 
 <template>
   <div class="device-map" :style="{ height }">
-    <!-- Loading overlay - 使用 v-show 保持地图容器始终存在 -->
-    <div v-show="loading" class="map-loading">
+    <!-- Loading overlay -->
+    <div v-if="loading || !mapReady" class="map-loading">
       <el-icon class="is-loading" size="32"><Loading /></el-icon>
-      <span>Loading...</span>
+      <span>地图加载中...</span>
     </div>
-    <l-map
-      v-show="!loading"
-      ref="mapRef"
-      :zoom="zoom"
-      :center="center"
-      :use-global-leaflet="false"
-      class="map-container"
-    >
-      <l-tile-layer
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        layer-type="base"
-        name="OpenStreetMap"
-      />
-      <l-marker
-        v-for="device in validDevices"
-        :key="device.id"
-        :lat-lng="[device.latitude!, device.longitude!]"
-        @click="handleMarkerClick(device)"
-      >
-        <l-icon
-          :icon-url="createMarkerIcon(getMarkerColor(device.status))"
-          :icon-size="[24, 36]"
-          :icon-anchor="[12, 36]"
-          :popup-anchor="[0, -36]"
-        />
-        <l-popup>
-          <div class="popup-content">
-            <div class="popup-header">
-              <span class="device-name">{{ device.name }}</span>
-              <el-tag
-                :type="device.status === 'online' ? 'success' : device.status === 'alarm' ? 'danger' : 'info'"
-                size="small"
-              >
-                {{ getStatusText(device.status) }}
-              </el-tag>
-            </div>
-            <div class="popup-info">
-              <div class="info-row">
-                <span class="label">MN:</span>
-                <span class="value">{{ device.mn }}</span>
-              </div>
-              <div class="info-row">
-                <span class="label">Type:</span>
-                <span class="value">{{ getDeviceTypeText(device.device_type) }}</span>
-              </div>
-              <div class="info-row" v-if="device.address">
-                <span class="label">Address:</span>
-                <span class="value">{{ device.address }}</span>
-              </div>
-              <div class="info-row" v-if="device.last_heartbeat">
-                <span class="label">Last seen:</span>
-                <span class="value">{{ new Date(device.last_heartbeat).toLocaleString('zh-CN') }}</span>
-              </div>
-            </div>
-          </div>
-        </l-popup>
-      </l-marker>
-    </l-map>
-    <div v-if="validDevices.length === 0 && !loading" class="no-data-overlay">
-      <el-empty description="No devices with location data" :image-size="80" />
+
+    <!-- Error overlay -->
+    <div v-if="mapError" class="map-error">
+      <el-icon size="32" color="#f56c6c"><WarningFilled /></el-icon>
+      <span>{{ mapError }}</span>
+      <el-button type="primary" size="small" @click="initMap">重试</el-button>
     </div>
+
+    <!-- Map container -->
+    <div ref="mapContainer" class="map-container"></div>
+
+    <!-- No data overlay -->
+    <div v-if="validDevices.length === 0 && !loading && mapReady" class="no-data-overlay">
+      <el-empty description="暂无带坐标的设备" :image-size="80" />
+    </div>
+
     <!-- Legend -->
     <div class="map-legend">
       <div class="legend-item">
         <span class="legend-marker" style="background: #67c23a"></span>
-        <span>Online</span>
+        <span>在线</span>
       </div>
       <div class="legend-item">
         <span class="legend-marker" style="background: #f56c6c"></span>
-        <span>Alarm</span>
+        <span>告警</span>
       </div>
       <div class="legend-item">
         <span class="legend-marker" style="background: #909399"></span>
-        <span>Offline</span>
+        <span>离线</span>
       </div>
       <div class="legend-item">
         <span class="legend-marker" style="background: #e6a23c"></span>
-        <span>Maintenance</span>
+        <span>维护中</span>
       </div>
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { Loading } from '@element-plus/icons-vue'
+import { Loading, WarningFilled } from '@element-plus/icons-vue'
 export default {
-  components: { Loading }
+  components: { Loading, WarningFilled }
 }
 </script>
 
@@ -236,6 +353,22 @@ export default {
 }
 
 .map-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #f5f7fa;
+  gap: 12px;
+  color: #909399;
+  z-index: 10;
+}
+
+.map-error {
   position: absolute;
   top: 0;
   left: 0;
@@ -290,44 +423,16 @@ export default {
   display: inline-block;
 }
 
-.popup-content {
-  min-width: 200px;
+/* AMap info window custom styles */
+:deep(.amap-info-content) {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  border: none;
+  padding: 0;
 }
 
-.popup-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #eee;
-}
-
-.device-name {
-  font-weight: bold;
-  font-size: 14px;
-  color: #333;
-}
-
-.popup-info {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.info-row {
-  display: flex;
-  font-size: 12px;
-}
-
-.info-row .label {
-  color: #909399;
-  width: 70px;
-  flex-shrink: 0;
-}
-
-.info-row .value {
-  color: #333;
-  word-break: break-all;
+:deep(.amap-info-sharp) {
+  display: none;
 }
 </style>

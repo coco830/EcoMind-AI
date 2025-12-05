@@ -14,7 +14,8 @@ const form = reactive({
   email: '',
   password: '',
   confirmPassword: '',
-  full_name: ''
+  full_name: '',
+  invitation_code: ''
 })
 
 const errors = reactive({
@@ -22,8 +23,46 @@ const errors = reactive({
   email: '',
   password: '',
   confirmPassword: '',
-  full_name: ''
+  full_name: '',
+  invitation_code: ''
 })
+
+// 邀请码验证状态
+const invitationValid = ref(false)
+const invitationName = ref('')
+const checkingCode = ref(false)
+
+// 验证邀请码
+const validateInvitationCode = async () => {
+  if (!form.invitation_code.trim()) {
+    invitationValid.value = false
+    invitationName.value = ''
+    return
+  }
+
+  checkingCode.value = true
+  try {
+    const response = await fetch(
+      `${import.meta.env.VITE_API_BASE_URL}/api/v1/invitations/validate/${encodeURIComponent(form.invitation_code.trim())}`
+    )
+    const data = await response.json()
+
+    if (data.valid) {
+      invitationValid.value = true
+      invitationName.value = data.name
+      errors.invitation_code = ''
+    } else {
+      invitationValid.value = false
+      invitationName.value = ''
+      errors.invitation_code = data.message || '邀请码无效'
+    }
+  } catch {
+    invitationValid.value = false
+    errors.invitation_code = '验证邀请码失败'
+  } finally {
+    checkingCode.value = false
+  }
+}
 
 const validateForm = (): boolean => {
   let isValid = true
@@ -34,6 +73,16 @@ const validateForm = (): boolean => {
   errors.password = ''
   errors.confirmPassword = ''
   errors.full_name = ''
+  errors.invitation_code = ''
+
+  // Invitation code validation
+  if (!form.invitation_code.trim()) {
+    errors.invitation_code = '请输入邀请码'
+    isValid = false
+  } else if (!invitationValid.value) {
+    errors.invitation_code = '请先验证邀请码'
+    isValid = false
+  }
 
   // Username validation
   if (!form.username.trim()) {
@@ -92,7 +141,8 @@ const handleRegister = async () => {
       username: form.username.trim(),
       email: form.email.trim(),
       password: form.password,
-      full_name: form.full_name.trim() || undefined
+      full_name: form.full_name.trim() || undefined,
+      invitation_code: form.invitation_code.trim()
     })
 
     ElMessage.success('注册成功！请登录')
@@ -120,7 +170,7 @@ const goToLogin = () => {
 <template>
   <div class="min-h-screen bg-[#F5F5F7] flex items-center justify-center p-6 font-sans">
     <!-- Subtle background pattern -->
-    <div class="fixed inset-0 opacity-[0.015]" style="background-image: url('data:image/svg+xml,%3Csvg width=&quot;60&quot; height=&quot;60&quot; viewBox=&quot;0 0 60 60&quot; xmlns=&quot;http://www.w3.org/2000/svg&quot;%3E%3Cg fill=&quot;none&quot; fill-rule=&quot;evenodd&quot;%3E%3Cg fill=&quot;%23000000&quot; fill-opacity=&quot;1&quot;%3E%3Cpath d=&quot;M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z&quot;/%3E%3C/g%3E%3C/g%3E%3C/svg%3E');"></div>
+    <div class="fixed inset-0 opacity-[0.015] bg-pattern"></div>
 
     <!-- Main Bento Container -->
     <div class="relative w-full max-w-[520px]">
@@ -157,6 +207,46 @@ const goToLogin = () => {
 
           <!-- Form -->
           <form @submit.prevent="handleRegister" class="space-y-5">
+
+            <!-- Invitation Code Field -->
+            <div class="space-y-2">
+              <label class="block text-[13px] font-medium text-[#1D1D1F] pl-1">
+                邀请码 <span class="text-red-400">*</span>
+              </label>
+              <div class="relative">
+                <input
+                  v-model="form.invitation_code"
+                  type="text"
+                  placeholder="请输入邀请码 (如: XXXX-XXXX-XXXX)"
+                  @blur="validateInvitationCode"
+                  :class="[
+                    'w-full h-[52px] px-5 pr-24 rounded-2xl text-[15px] text-[#1D1D1F] placeholder-[#AEAEB2] uppercase',
+                    'bg-[#F5F5F7] border-none outline-none',
+                    'transition-all duration-300 ease-out',
+                    'focus:bg-white focus:shadow-[0_0_0_4px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)]',
+                    errors.invitation_code ? 'ring-2 ring-red-400/50' : '',
+                    invitationValid ? 'ring-2 ring-green-400/50' : ''
+                  ]"
+                />
+                <button
+                  type="button"
+                  @click="validateInvitationCode"
+                  :disabled="checkingCode || !form.invitation_code.trim()"
+                  class="absolute right-3 top-1/2 -translate-y-1/2 px-3 py-1.5 text-[12px] font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  :class="invitationValid ? 'bg-green-100 text-green-700' : 'bg-[#E5E5EA] text-[#1D1D1F] hover:bg-[#D1D1D6]'"
+                >
+                  <span v-if="checkingCode">验证中...</span>
+                  <span v-else-if="invitationValid">✓ 已验证</span>
+                  <span v-else>验证</span>
+                </button>
+              </div>
+              <div v-if="errors.invitation_code" class="text-red-400 text-xs pl-1">
+                {{ errors.invitation_code }}
+              </div>
+              <div v-else-if="invitationValid && invitationName" class="text-green-600 text-xs pl-1">
+                企业: {{ invitationName }}
+              </div>
+            </div>
 
             <!-- Username Field -->
             <div class="space-y-2">
@@ -336,10 +426,10 @@ const goToLogin = () => {
 
           <!-- Info Badge -->
           <div class="mt-6 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[#F5F5F7]">
-            <svg class="w-4 h-4 text-[#34C759]" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+            <svg class="w-4 h-4 text-[#FF9500]" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
             </svg>
-            <span class="text-[12px] text-[#86868B]">注册后将自动分配到默认组织</span>
+            <span class="text-[12px] text-[#86868B]">需要邀请码才能注册，请联系管理员获取</span>
           </div>
 
         </div>
@@ -357,6 +447,11 @@ const goToLogin = () => {
 </template>
 
 <style scoped>
+/* Background pattern */
+.bg-pattern {
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23000000' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
 /* Ensure Inter font is applied */
 .font-sans {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;

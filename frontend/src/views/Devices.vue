@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
-import { deviceApi, type Device, type DeviceCreate, type ThresholdConfig, type PollutantThreshold, POLLUTANT_OPTIONS } from '@/api/devices'
+import { deviceApi, type Device, type DeviceCreate, type ThresholdConfig, type IndustryType, type IndustryTypeInfo, POLLUTANT_OPTIONS } from '@/api/devices'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -13,6 +13,7 @@ const dialogVisible = ref(false)
 const dialogTitle = ref('添加设备')
 const formRef = ref<FormInstance>()
 const editingId = ref<string | null>(null)
+const industryTypes = ref<IndustryTypeInfo[]>([])
 
 // Default threshold config
 const getDefaultThresholdConfig = (deviceType: string): ThresholdConfig => {
@@ -33,11 +34,32 @@ const form = ref<DeviceCreate>({
   mn: '',
   name: '',
   device_type: 'water',
+  industry_type: undefined,
+  national_standard: '',
   latitude: undefined,
   longitude: undefined,
   address: '',
   thresholds: getDefaultThresholdConfig('water')
 })
+
+// 当行业类型改变时，自动填充执行标准
+const handleIndustryTypeChange = (industryType: IndustryType | undefined) => {
+  if (industryType) {
+    const info = industryTypes.value.find(t => t.code === industryType)
+    if (info) {
+      form.value.national_standard = info.standard
+    }
+  } else {
+    form.value.national_standard = ''
+  }
+}
+
+// 获取行业类型名称
+const getIndustryTypeName = (type: IndustryType | null): string => {
+  if (!type) return '-'
+  const info = industryTypes.value.find(t => t.code === type)
+  return info ? info.name : type
+}
 
 // Watch for device type changes and update threshold config
 watch(() => form.value.device_type, (newType) => {
@@ -75,6 +97,14 @@ const loadDevices = async () => {
   }
 }
 
+const loadIndustryTypes = async () => {
+  try {
+    industryTypes.value = await deviceApi.getIndustryTypes()
+  } catch (error) {
+    console.error('加载行业类型失败:', error)
+  }
+}
+
 const openDialog = (device?: Device) => {
   if (device) {
     dialogTitle.value = '编辑设备'
@@ -84,6 +114,8 @@ const openDialog = (device?: Device) => {
       name: device.name,
       device_type: device.device_type,
       org_id: device.org_id,  // 编辑时保留原来的org_id
+      industry_type: device.industry_type || undefined,
+      national_standard: device.national_standard || '',
       latitude: device.latitude || undefined,
       longitude: device.longitude || undefined,
       address: device.address || '',
@@ -96,6 +128,8 @@ const openDialog = (device?: Device) => {
       mn: '',
       name: '',
       device_type: 'water',
+      industry_type: undefined,
+      national_standard: '',
       // 不传 org_id，后端会自动使用当前用户的组织
       latitude: undefined,
       longitude: undefined,
@@ -166,7 +200,10 @@ const canModifyDevices = computed(() => {
   return role === 'admin' || role === 'operator'
 })
 
-onMounted(loadDevices)
+onMounted(() => {
+  loadDevices()
+  loadIndustryTypes()
+})
 </script>
 
 <template>
@@ -200,9 +237,22 @@ onMounted(loadDevices)
       <el-table :data="filteredDevices" v-loading="loading" stripe>
         <el-table-column prop="mn" label="MN号" width="180" />
         <el-table-column prop="name" label="设备名称" min-width="150" />
-        <el-table-column prop="device_type" label="类型" width="120">
+        <el-table-column prop="device_type" label="类型" width="100">
           <template #default="{ row }">
             {{ getDeviceTypeLabel(row.device_type) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="industry_type" label="所属行业" width="140">
+          <template #default="{ row }">
+            {{ getIndustryTypeName(row.industry_type) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="national_standard" label="执行标准" width="130">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.national_standard" :content="row.national_standard" placement="top">
+              <span>{{ row.national_standard }}</span>
+            </el-tooltip>
+            <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
@@ -242,6 +292,31 @@ onMounted(loadDevices)
             <el-option label="噪声监测" value="noise" />
             <el-option label="土壤监测" value="soil" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="所属行业">
+          <el-select
+            v-model="form.industry_type"
+            placeholder="请选择所属行业"
+            clearable
+            style="width: 100%"
+            @change="handleIndustryTypeChange"
+          >
+            <el-option
+              v-for="industry in industryTypes"
+              :key="industry.code"
+              :label="industry.name"
+              :value="industry.code"
+            >
+              <span>{{ industry.name }}</span>
+              <span style="float: right; color: #8492a6; font-size: 12px">{{ industry.standard }}</span>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="执行标准">
+          <el-input
+            v-model="form.national_standard"
+            placeholder="执行的国家或地方排放标准（选择行业后自动填充）"
+          />
         </el-form-item>
         <el-form-item label="位置">
           <el-input v-model="form.address" placeholder="设备安装位置" />

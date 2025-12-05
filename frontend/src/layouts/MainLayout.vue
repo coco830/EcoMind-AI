@@ -9,7 +9,8 @@ import {
   Bell,
   Document,
   Setting,
-  ArrowDown
+  ArrowDown,
+  Ticket
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -18,7 +19,8 @@ const authStore = useAuthStore()
 
 const isCollapse = ref(false)
 
-const menuItems = [
+// 基础菜单项
+const baseMenuItems = [
   { path: '/', icon: HomeFilled, title: '监控驾驶舱' },
   { path: '/devices', icon: Monitor, title: '设备管理' },
   { path: '/data', icon: DataLine, title: '数据查询' },
@@ -26,6 +28,19 @@ const menuItems = [
   { path: '/reports', icon: Document, title: '报表中心' },
   { path: '/settings', icon: Setting, title: '系统设置' }
 ]
+
+// 超级管理员专属菜单
+const superAdminMenuItems = [
+  { path: '/invitations', icon: Ticket, title: '邀请码管理' }
+]
+
+// 根据用户权限动态生成菜单
+const menuItems = computed(() => {
+  if (authStore.user?.is_superadmin) {
+    return [...baseMenuItems, ...superAdminMenuItems]
+  }
+  return baseMenuItems
+})
 
 const activeMenu = computed(() => route.path)
 

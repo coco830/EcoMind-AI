@@ -5,15 +5,19 @@ import json
 import math
 import random
 from datetime import date, datetime, timedelta
-from typing import Any, AsyncGenerator
+from typing import Annotated, Any, AsyncGenerator
+from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.anomaly_detection import detect_anomalies, IsolationForestDetector
 from app.ai.prediction import predict_trend
+from app.api.deps import get_current_active_user
 from app.core.config import get_settings
 from app.core.prompts import (
     build_expert_diagnosis_prompt,
@@ -22,9 +26,14 @@ from app.core.prompts import (
     get_domain_knowledge,
     get_pollutant_info,
 )
+from app.core.rate_limiter import get_ai_report_limiter
+from app.db.postgres import get_db, AsyncSessionLocal
 from app.db.tdengine_client import get_tdengine_client
-from app.services.data_analysis_service import analyze_device_daily_stats
+from app.models.daily_report import DailyReport, ReportStatus
+from app.models.user import User
+from app.services.data_analysis_service import DataAnalysisService
 from app.services.llm.spark_client import SparkClient, SparkClientError
+from app.services.scheduler import trigger_daily_reports_manually
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -469,18 +478,35 @@ async def _generate_report_stream(
         mode_desc = "综合分析" if is_comprehensive else f"分析 {pollutant_code}"
         yield f"event: start\ndata: {json.dumps({'status': 'analyzing', 'message': f'正在{mode_desc}数据...', 'mode': 'comprehensive' if is_comprehensive else 'single'})}\n\n"
 
-        # 步骤2：获取数据统计特征
+        # 步骤2：获取数据统计特征和行业信息
         logger.info(
             "Fetching device stats",
             device_id=device_id,
             date=target_date.isoformat(),
             comprehensive=is_comprehensive,
         )
-        stats = await analyze_device_daily_stats(
-            device_id=device_id,
-            target_date=target_date,
-            pollutant_code=pollutant_code,  # None = 查询所有污染物
-        )
+
+        # 创建数据库会话用于获取设备行业信息
+        async with AsyncSessionLocal() as db_session:
+            # 使用 DataAnalysisService 获取统计和行业信息
+            service = DataAnalysisService(db_session)
+            stats = await service.analyze_device_daily_stats(
+                device_id=device_id,
+                target_date=target_date,
+                pollutant_code=pollutant_code,  # None = 查询所有污染物
+            )
+
+            # 获取设备行业信息
+            industry_info = await service.get_device_industry_info(device_id)
+            industry_type = industry_info.get("industry_type")
+            national_standard = industry_info.get("national_standard")
+
+            logger.info(
+                "Device industry info",
+                device_id=device_id,
+                industry_type=industry_type,
+                national_standard=national_standard,
+            )
 
         if not stats.get("pollutants"):
             yield f"event: error\ndata: {json.dumps({'error': f'设备 {device_id} 在 {target_date} 无监测数据'})}\n\n"
@@ -503,11 +529,14 @@ async def _generate_report_stream(
                 pollutants_stats=stats["pollutants"],
                 total_data_points=stats.get("data_count", 0),
                 domain=domain,
+                industry_type=industry_type,
+                national_standard=national_standard,
             )
             logger.info(
                 "Built comprehensive prompt",
                 pollutant_count=pollutant_count,
                 prompt_length=len(prompt),
+                industry_type=industry_type,
             )
         else:
             # 单污染物分析模式（保持兼容）
@@ -698,12 +727,19 @@ async def generate_ai_report_sync(
         date=target_date.isoformat(),
     )
 
-    # 获取数据统计（pollutant=None 表示获取所有污染物）
-    stats = await analyze_device_daily_stats(
-        device_id=device_id,
-        target_date=target_date,
-        pollutant_code=pollutant,
-    )
+    # 获取数据统计和行业信息（pollutant=None 表示获取所有污染物）
+    async with AsyncSessionLocal() as db_session:
+        service = DataAnalysisService(db_session)
+        stats = await service.analyze_device_daily_stats(
+            device_id=device_id,
+            target_date=target_date,
+            pollutant_code=pollutant,
+        )
+
+        # 获取设备行业信息
+        industry_info = await service.get_device_industry_info(device_id)
+        industry_type = industry_info.get("industry_type")
+        national_standard = industry_info.get("national_standard")
 
     if not stats.get("pollutants"):
         raise HTTPException(
@@ -724,6 +760,8 @@ async def generate_ai_report_sync(
             pollutants_stats=stats["pollutants"],
             total_data_points=stats.get("data_count", 0),
             domain=domain,
+            industry_type=industry_type,
+            national_standard=national_standard,
         )
 
         # 调用 AI
@@ -800,3 +838,309 @@ async def generate_ai_report_sync(
             "stats": stats,
             "report": report_content,
         }
+
+
+# ==================== Rate Limiting & Cached Reports ====================
+
+
+@router.get(
+    "/report/rate-limit-status",
+    summary="检查 AI 报告生成限流状态",
+    description="""
+检查当前用户对指定设备生成 AI 报告的限流状态。
+
+返回：
+- `device_cooldown`: 设备冷却状态（同一设备10分钟内不能重复生成）
+- `user_quota`: 用户每日配额状态（每天最多5次）
+- `can_generate`: 是否可以生成报告
+""",
+)
+async def check_rate_limit_status(
+    device_id: str = Query(..., description="设备 ID"),
+    current_user: User = Depends(get_current_active_user),
+) -> dict[str, Any]:
+    """检查 AI 报告生成的限流状态。"""
+    rate_limiter = get_ai_report_limiter()
+    return rate_limiter.get_status(device_id, current_user.id)
+
+
+@router.get(
+    "/report/cached/{device_id}",
+    summary="获取缓存的 AI 日报",
+    description="""
+获取指定设备指定日期的缓存日报。
+
+如果日报已存在且状态为 completed，直接返回缓存内容。
+如果日报不存在或正在生成中，返回相应状态信息。
+""",
+)
+async def get_cached_report(
+    device_id: str,
+    report_date: str | None = Query(default=None, description="报告日期 (YYYY-MM-DD)，默认为昨天"),
+    current_user: User = Depends(get_current_active_user),
+) -> dict[str, Any]:
+    """获取缓存的 AI 日报。"""
+    # 解析日期（默认昨天）
+    if report_date:
+        try:
+            target_date = date.fromisoformat(report_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD")
+    else:
+        target_date = date.today() - timedelta(days=1)
+
+    async with AsyncSessionLocal() as db:
+        # 查询缓存的日报
+        result = await db.execute(
+            select(DailyReport).where(
+                DailyReport.device_id == device_id,
+                DailyReport.report_date == target_date,
+            )
+        )
+        report = result.scalar_one_or_none()
+
+        if report is None:
+            return {
+                "exists": False,
+                "device_id": device_id,
+                "report_date": target_date.isoformat(),
+                "message": "该日期的日报尚未生成",
+            }
+
+        return {
+            "exists": True,
+            "device_id": device_id,
+            "report_date": target_date.isoformat(),
+            "status": report.status,
+            "report_content": report.report_content if report.status == ReportStatus.COMPLETED.value else None,
+            "stats_snapshot": report.stats_snapshot,
+            "pollutant_count": report.pollutant_count,
+            "data_points": report.data_points,
+            "domain": report.domain,
+            "error_message": report.error_message if report.status == ReportStatus.FAILED.value else None,
+            "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+            "created_at": report.created_at.isoformat(),
+        }
+
+
+@router.post(
+    "/report/generate",
+    summary="生成 AI 诊断报告（带限流）",
+    description="""
+生成 AI 诊断报告，带限流保护。
+
+**限流规则**:
+- 设备冷却：同一设备10分钟内不能重复生成报告
+- 用户配额：每个用户每天最多生成5次报告
+
+**返回**:
+- 成功时返回报告内容
+- 被限流时返回 429 错误
+""",
+)
+async def generate_report_with_rate_limit(
+    device_id: str = Query(..., description="设备 ID"),
+    device_name: str = Query(default="监测设备", description="设备名称"),
+    report_date: str | None = Query(default=None, description="报告日期 (YYYY-MM-DD)，默认为今天"),
+    current_user: User = Depends(get_current_active_user),
+) -> dict[str, Any]:
+    """带限流的 AI 诊断报告生成。"""
+    rate_limiter = get_ai_report_limiter()
+
+    # 检查设备冷却
+    device_allowed, remaining_seconds = rate_limiter.check_device_cooldown(device_id)
+    if not device_allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "device_cooldown",
+                "message": f"该设备数据变化不大，请 {remaining_seconds // 60} 分 {remaining_seconds % 60} 秒后再试",
+                "remaining_seconds": remaining_seconds,
+            },
+        )
+
+    # 检查用户配额
+    user_allowed, used_quota, total_quota = rate_limiter.check_user_quota(current_user.id)
+    if not user_allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "user_quota_exceeded",
+                "message": f"您今日已生成 {used_quota} 次报告，已达上限 {total_quota} 次",
+                "used": used_quota,
+                "total": total_quota,
+            },
+        )
+
+    # 解析日期
+    if report_date:
+        try:
+            target_date = date.fromisoformat(report_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD")
+    else:
+        target_date = date.today()
+
+    logger.info(
+        "Generating AI report with rate limit",
+        device_id=device_id,
+        user_id=str(current_user.id),
+        date=target_date.isoformat(),
+    )
+
+    # 获取数据统计和行业信息
+    async with AsyncSessionLocal() as db_session:
+        service = DataAnalysisService(db_session)
+        stats = await service.analyze_device_daily_stats(
+            device_id=device_id,
+            target_date=target_date,
+            pollutant_code=None,  # 综合分析
+        )
+
+        # 获取设备行业信息
+        industry_info = await service.get_device_industry_info(device_id)
+        industry_type = industry_info.get("industry_type")
+        national_standard = industry_info.get("national_standard")
+
+    if not stats.get("pollutants"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"设备 {device_id} 在 {target_date} 无监测数据",
+        )
+
+    # 构建 Prompt
+    first_code = stats["pollutants"][0]["pollutant_code"]
+    domain = get_domain_from_pollutant_code(first_code)
+
+    prompt = build_comprehensive_diagnosis_prompt(
+        device_id=device_id,
+        device_name=device_name,
+        report_date=target_date.isoformat(),
+        pollutants_stats=stats["pollutants"],
+        total_data_points=stats.get("data_count", 0),
+        domain=domain,
+        industry_type=industry_type,
+        national_standard=national_standard,
+    )
+
+    # 调用 AI
+    try:
+        spark_client = _get_spark_client()
+        messages = [{"role": "user", "content": prompt}]
+        report_content = await spark_client.chat(messages)
+    except SparkClientError as e:
+        raise HTTPException(status_code=500, detail=f"AI 服务错误: {str(e)}")
+
+    # 记录限流
+    rate_limiter.record_report_generation(device_id, current_user.id)
+
+    # 保存到数据库（可选，用于缓存）
+    async with AsyncSessionLocal() as db:
+        # 检查是否已存在
+        result = await db.execute(
+            select(DailyReport).where(
+                DailyReport.device_id == device_id,
+                DailyReport.report_date == target_date,
+            )
+        )
+        existing_report = result.scalar_one_or_none()
+
+        if existing_report:
+            # 更新现有记录
+            existing_report.report_content = report_content
+            existing_report.stats_snapshot = json.dumps(stats, ensure_ascii=False)
+            existing_report.pollutant_count = len(stats["pollutants"])
+            existing_report.data_points = stats.get("data_count", 0)
+            existing_report.domain = domain
+            existing_report.status = ReportStatus.COMPLETED.value
+            existing_report.generated_at = datetime.now()
+            existing_report.error_message = None
+        else:
+            # 创建新记录
+            new_report = DailyReport(
+                device_id=device_id,
+                report_date=target_date,
+                status=ReportStatus.COMPLETED.value,
+                report_content=report_content,
+                stats_snapshot=json.dumps(stats, ensure_ascii=False),
+                pollutant_count=len(stats["pollutants"]),
+                data_points=stats.get("data_count", 0),
+                domain=domain,
+                generated_at=datetime.now(),
+            )
+            db.add(new_report)
+
+        await db.commit()
+
+    return {
+        "device_id": device_id,
+        "device_name": device_name,
+        "mode": "comprehensive",
+        "pollutant_count": len(stats["pollutants"]),
+        "report_date": target_date.isoformat(),
+        "domain": domain,
+        "industry_type": industry_type,
+        "national_standard": national_standard,
+        "stats": stats,
+        "report": report_content,
+        "rate_limit": {
+            "device_cooldown_minutes": rate_limiter.device_cooldown_minutes,
+            "user_daily_quota": rate_limiter.user_daily_quota,
+            "user_daily_used": used_quota + 1,
+        },
+    }
+
+
+# ==================== Scheduled Task Manual Trigger ====================
+
+
+@router.post(
+    "/report/batch-generate",
+    summary="批量生成 AI 日报（管理员）",
+    description="""
+手动触发日报批量生成任务。
+
+**用途**:
+- 测试定时任务
+- 补生成历史日期的日报
+- 手动为指定设备生成日报
+
+**参数**:
+- `device_ids`: 指定设备 MN 号列表，不传则为所有在线设备生成
+- `report_date`: 报告日期，默认为昨天
+
+**注意**: 此接口用于管理用途，生产环境请谨慎使用。
+""",
+)
+async def batch_generate_reports(
+    device_ids: list[str] | None = Query(default=None, description="设备 MN 号列表"),
+    report_date: str | None = Query(default=None, description="报告日期 (YYYY-MM-DD)，默认为昨天"),
+    current_user: User = Depends(get_current_active_user),
+) -> dict[str, Any]:
+    """手动触发批量日报生成。"""
+    # 解析日期
+    target_date = None
+    if report_date:
+        try:
+            target_date = date.fromisoformat(report_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD")
+
+    logger.info(
+        "Manual batch report generation triggered",
+        user_id=str(current_user.id),
+        device_ids=device_ids,
+        report_date=report_date,
+    )
+
+    # 触发任务
+    results = await trigger_daily_reports_manually(
+        device_ids=device_ids,
+        target_date=target_date,
+    )
+
+    return {
+        "message": "批量日报生成任务已完成",
+        "target_date": (target_date or (date.today() - timedelta(days=1))).isoformat(),
+        "results": results,
+    }

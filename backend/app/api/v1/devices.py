@@ -11,7 +11,8 @@ from sqlalchemy.orm import selectinload
 
 from app.db.postgres import get_db
 from app.models.device import (
-    Device, DeviceCreate, DeviceResponse, DeviceStatus, DeviceType, ThresholdConfig
+    Device, DeviceCreate, DeviceResponse, DeviceStatus, DeviceType,
+    IndustryType, ThresholdConfig, INDUSTRY_STANDARD_MAP
 )
 from app.models.organization import Organization
 from app.models.user import User
@@ -48,6 +49,14 @@ def _device_to_response(device: Device) -> DeviceResponse:
     # Parse thresholds
     thresholds = _deserialize_thresholds(device.thresholds)
 
+    # Parse industry_type if present
+    industry_type = None
+    if device.industry_type:
+        try:
+            industry_type = IndustryType(device.industry_type)
+        except ValueError:
+            pass
+
     return DeviceResponse(
         id=device.id,
         mn=device.mn,
@@ -55,6 +64,8 @@ def _device_to_response(device: Device) -> DeviceResponse:
         device_type=DeviceType(device.device_type),
         status=DeviceStatus(device.status),
         org_id=device.org_id,
+        industry_type=industry_type,
+        national_standard=device.national_standard,
         latitude=device.latitude,
         longitude=device.longitude,
         address=device.address,
@@ -75,6 +86,61 @@ class DeviceListResponse:
     page_size: int
 
 
+@router.get("/industry-types")
+async def get_industry_types() -> list[dict]:
+    """Get list of available industry types with their default standards.
+
+    Returns a list of industry types with name, code, and associated standard.
+    """
+    result = []
+    for code, info in INDUSTRY_STANDARD_MAP.items():
+        result.append({
+            "code": code,
+            "name": info["name"],
+            "standard": info["standard"],
+            "standard_name": info["standard_name"],
+        })
+    return result
+
+
+@router.get("/stats/summary")
+async def get_device_stats(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> dict:
+    """Get device statistics summary.
+
+    Uses database-level aggregation for better performance instead of loading all rows.
+    """
+    from sqlalchemy import func
+
+    # Use database aggregation instead of loading all devices
+    status_query = select(
+        func.count().label("total"),
+        func.count().filter(Device.status == DeviceStatus.ONLINE.value).label("online"),
+        func.count().filter(Device.status == DeviceStatus.OFFLINE.value).label("offline"),
+        func.count().filter(Device.status == DeviceStatus.ALARM.value).label("alarm"),
+        func.count().filter(Device.status == DeviceStatus.MAINTENANCE.value).label("maintenance"),
+    ).select_from(Device)
+
+    # Superadmin can see all devices, regular users only see their org's devices
+    if not current_user.is_superadmin and current_user.org_id:
+        status_query = status_query.where(Device.org_id == current_user.org_id)
+
+    result = await db.execute(status_query)
+    row = result.one()
+
+    stats = {
+        "total": row.total or 0,
+        "online": row.online or 0,
+        "offline": row.offline or 0,
+        "alarm": row.alarm or 0,
+        "maintenance": row.maintenance or 0,
+    }
+
+    return stats
+
+
 @router.get("", response_model=list[DeviceResponse])
 async def list_devices(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -91,11 +157,13 @@ async def list_devices(
     # Use selectinload to preload organization relationship (avoids N+1 queries)
     query = select(Device).options(selectinload(Device.organization))
 
-    # Filter by organization if user is not admin
-    if current_user.org_id:
+    # Superadmin can see all devices (optionally filtered by org_id)
+    # Regular users can only see their organization's devices
+    if current_user.is_superadmin:
+        if org_id:
+            query = query.where(Device.org_id == org_id)
+    elif current_user.org_id:
         query = query.where(Device.org_id == current_user.org_id)
-    elif org_id:
-        query = query.where(Device.org_id == org_id)
 
     if device_status:
         query = query.where(Device.status == device_status.value)
@@ -184,11 +252,21 @@ async def create_device(
             detail="Device with this MN already exists in your organization",
         )
 
+    # Determine national_standard if industry_type is provided
+    national_standard = device_data.national_standard
+    if device_data.industry_type and not national_standard:
+        # Auto-fill national_standard from industry type mapping
+        industry_info = INDUSTRY_STANDARD_MAP.get(device_data.industry_type.value)
+        if industry_info:
+            national_standard = industry_info.get("standard")
+
     device = Device(
         mn=device_data.mn,
         name=device_data.name,
         device_type=device_data.device_type.value,
         org_id=org_id,
+        industry_type=device_data.industry_type.value if device_data.industry_type else None,
+        national_standard=national_standard,
         latitude=device_data.latitude,
         longitude=device_data.longitude,
         address=device_data.address,
@@ -233,11 +311,21 @@ async def update_device(
                 detail="Cannot transfer device to another organization",
             )
 
+    # Determine national_standard if industry_type is provided
+    national_standard = device_data.national_standard
+    if device_data.industry_type and not national_standard:
+        # Auto-fill national_standard from industry type mapping
+        industry_info = INDUSTRY_STANDARD_MAP.get(device_data.industry_type.value)
+        if industry_info:
+            national_standard = industry_info.get("standard")
+
     # Update fields
     device.mn = device_data.mn
     device.name = device_data.name
     device.device_type = device_data.device_type.value
     device.org_id = device_data.org_id
+    device.industry_type = device_data.industry_type.value if device_data.industry_type else None
+    device.national_standard = national_standard
     device.latitude = device_data.latitude
     device.longitude = device_data.longitude
     device.address = device_data.address
@@ -275,38 +363,3 @@ async def delete_device(
             )
 
     await db.delete(device)
-
-
-@router.get("/stats/summary")
-async def get_device_stats(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_active_user)],
-) -> dict:
-    """Get device statistics summary.
-
-    Uses database-level aggregation for better performance instead of loading all rows.
-    """
-    # Use database aggregation instead of loading all devices
-    status_query = select(
-        func.count().label("total"),
-        func.count().filter(Device.status == DeviceStatus.ONLINE.value).label("online"),
-        func.count().filter(Device.status == DeviceStatus.OFFLINE.value).label("offline"),
-        func.count().filter(Device.status == DeviceStatus.ALARM.value).label("alarm"),
-        func.count().filter(Device.status == DeviceStatus.MAINTENANCE.value).label("maintenance"),
-    ).select_from(Device)
-
-    if current_user.org_id:
-        status_query = status_query.where(Device.org_id == current_user.org_id)
-
-    result = await db.execute(status_query)
-    row = result.one()
-
-    stats = {
-        "total": row.total or 0,
-        "online": row.online or 0,
-        "offline": row.offline or 0,
-        "alarm": row.alarm or 0,
-        "maintenance": row.maintenance or 0,
-    }
-
-    return stats

@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { dashboardApi, type DashboardStats, type TrendParams } from '@/api/dashboard'
 import { deviceApi, type Device } from '@/api/devices'
 import { aiApi, type PredictionResponse } from '@/api/ai'
@@ -49,9 +48,6 @@ const error = ref<string | null>(null)
 const predictionData = ref<PredictionResponse | null>(null)
 const selectedDeviceForPrediction = ref<string>('')
 const predictionLoading = ref(false)
-
-// Demo data injection
-const demoInjectLoading = ref(false)
 
 // ECharts instance
 let trendChart: echarts.ECharts | null = null
@@ -219,13 +215,18 @@ const loadData = async () => {
 const parseDevicePollutants = (device: Device) => {
   if (device.pollutant_codes) {
     let codes: string[] = []
-    if (Array.isArray(device.pollutant_codes)) {
-      codes = device.pollutant_codes
-    } else if (typeof device.pollutant_codes === 'string') {
-      try {
-        codes = JSON.parse(device.pollutant_codes)
-      } catch {
-        codes = device.pollutant_codes.split(',').map(s => s.trim())
+    const rawCodes = device.pollutant_codes
+    if (Array.isArray(rawCodes)) {
+      codes = rawCodes
+    } else {
+      // 处理可能的字符串类型（兼容旧数据）
+      const codesStr = rawCodes as unknown as string
+      if (typeof codesStr === 'string') {
+        try {
+          codes = JSON.parse(codesStr)
+        } catch {
+          codes = codesStr.split(',').map((s: string) => s.trim())
+        }
       }
     }
     if (codes.length > 0) {
@@ -366,32 +367,6 @@ const toggleExpand = () => {
 
 const refreshTrendAndPrediction = async () => {
   await Promise.all([loadTrend(), loadPrediction()])
-}
-
-// Inject demo data for testing
-const injectDemoData = async () => {
-  if (!selectedDeviceForPrediction.value) {
-    ElMessage.warning('请先选择设备')
-    return
-  }
-
-  demoInjectLoading.value = true
-  try {
-    const result = await dashboardApi.injectDemoData({
-      device_id: selectedDeviceForPrediction.value,
-      hours: 24,
-      interval_minutes: 15,
-      include_anomalies: true,
-    })
-
-    ElMessage.success(`${result.message}（${result.pollutants} 种污染物，${result.data_points} 个数据点）`)
-    await loadData()
-  } catch (e: unknown) {
-    console.error('Failed to inject demo data:', e)
-    ElMessage.error(e instanceof Error ? e.message : '注入演示数据失败')
-  } finally {
-    demoInjectLoading.value = false
-  }
 }
 
 const handleDeviceClick = (device: Device) => {
@@ -882,17 +857,6 @@ onUnmounted(() => {
         <div class="card-header">
           <span class="card-title">实时监测数据</span>
           <div class="header-right">
-            <el-button
-              type="warning"
-              size="small"
-              :loading="demoInjectLoading"
-              @click="injectDemoData"
-              round
-            >
-              <el-icon v-if="!demoInjectLoading"><Upload /></el-icon>
-              注入演示数据
-            </el-button>
-            <el-divider direction="vertical" />
             <div class="preset-buttons">
               <template v-for="preset in pollutantPresets" :key="preset.value">
                 <el-dropdown
@@ -1158,9 +1122,9 @@ onUnmounted(() => {
 </template>
 
 <script lang="ts">
-import { Refresh, ArrowDown, ArrowUp, Upload } from '@element-plus/icons-vue'
+import { Refresh, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 export default {
-  components: { Refresh, ArrowDown, ArrowUp, Upload }
+  components: { Refresh, ArrowDown, ArrowUp }
 }
 </script>
 

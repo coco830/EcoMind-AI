@@ -1,0 +1,168 @@
+# EcoMind-AI Production Docker Compose
+# 部署架构: 前端托管在腾讯云 CloudBase，后端部署在 CVM
+#
+# 使用方法:
+#   1. 复制 .env.example 为 .env 并配置生产环境变量
+#   2. 准备 SSL 证书放入 ./deploy/certs/ 目录
+#   3. docker-compose -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # ===========================================
+  # Nginx 反向代理 (HTTPS API Gateway)
+  # ===========================================
+  nginx:
+    image: nginx:alpine
+    container_name: ecomind-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+      - ./deploy/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - backend
+    networks:
+      - ecomind-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Backend API 服务
+  # ===========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: ecomind-backend
+    expose:
+      - "8000"
+    ports:
+      - "9880:9880"  # TCP Gateway 端口 (HJ212 协议)
+    volumes:
+      # 生产环境不挂载源码，使用镜像内代码
+      - backend_logs:/app/logs
+    environment:
+      # 运行环境
+      - ENVIRONMENT=production
+      - DEBUG=false
+
+      # 数据库连接
+      - TDENGINE_HOST=tdengine
+      - TDENGINE_PORT=6030
+      - TDENGINE_USER=root
+      - TDENGINE_PASSWORD=${TDENGINE_PASSWORD:-taosdata}
+      - TDENGINE_DATABASE=ecomind
+
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=ecomind
+      - POSTGRES_USER=ecomind
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+      # 安全密钥 (必须在 .env 中配置)
+      - JWT_SECRET=${JWT_SECRET}
+      - SM4_KEY=${SM4_KEY}
+
+      # TCP Gateway
+      - TCP_GATEWAY_PORT=9880
+
+      # CORS 配置 (重要! 添加前端域名)
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+
+      # AI 服务
+      - SPARK_APP_ID=${SPARK_APP_ID}
+      - SPARK_API_KEY=${SPARK_API_KEY}
+      - SPARK_API_SECRET=${SPARK_API_SECRET}
+
+      # 腾讯云短信 (可选)
+      - TENCENT_SECRET_ID=${TENCENT_SECRET_ID:-}
+      - TENCENT_SECRET_KEY=${TENCENT_SECRET_KEY:-}
+      - TENCENT_SMS_SDK_APP_ID=${TENCENT_SMS_SDK_APP_ID:-}
+      - TENCENT_SMS_SIGN_NAME=${TENCENT_SMS_SIGN_NAME:-}
+      - TENCENT_SMS_TEMPLATE_ID=${TENCENT_SMS_TEMPLATE_ID:-}
+
+    depends_on:
+      tdengine:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+    networks:
+      - ecomind-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ===========================================
+  # TDengine 时序数据库
+  # ===========================================
+  tdengine:
+    image: tdengine/tdengine:2.6.0.34
+    container_name: ecomind-tdengine
+    hostname: tdengine
+    volumes:
+      - tdengine_data:/var/lib/taos
+      - tdengine_log:/var/log/taos
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      - ecomind-network
+    healthcheck:
+      test: ["CMD", "taos", "-s", "select server_version();"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  # ===========================================
+  # PostgreSQL 业务数据库
+  # ===========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: ecomind-postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=ecomind
+      - POSTGRES_USER=ecomind
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - TZ=Asia/Shanghai
+    networks:
+      - ecomind-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecomind -d ecomind"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+# ===========================================
+# 网络配置
+# ===========================================
+networks:
+  ecomind-network:
+    driver: bridge
+
+# ===========================================
+# 数据卷
+# ===========================================
+volumes:
+  tdengine_data:
+    driver: local
+  tdengine_log:
+    driver: local
+  postgres_data:
+    driver: local
+  backend_logs:
+    driver: local

@@ -46,23 +46,26 @@ export const useDeviceStore = defineStore('device', () => {
 
   // 从设备的 pollutant_codes 字段解析活跃污染物
   function parseDevicePollutants(device: Device): string[] {
-    if (!device.pollutant_codes) {
+    const codes = device.pollutant_codes
+    if (!codes) {
       return COMMON_POLLUTANTS // 默认显示常用指标
     }
 
     // 支持多种格式：数组、逗号分隔字符串、JSON字符串
-    if (Array.isArray(device.pollutant_codes)) {
-      return device.pollutant_codes
+    if (Array.isArray(codes)) {
+      return codes
     }
 
-    if (typeof device.pollutant_codes === 'string') {
+    // 处理可能的字符串类型（兼容旧数据）
+    const codesStr = codes as unknown as string
+    if (typeof codesStr === 'string') {
       try {
         // 尝试解析 JSON
-        const parsed = JSON.parse(device.pollutant_codes)
+        const parsed = JSON.parse(codesStr)
         if (Array.isArray(parsed)) return parsed
       } catch {
         // 逗号分隔
-        return device.pollutant_codes.split(',').map(s => s.trim()).filter(Boolean)
+        return codesStr.split(',').map((s: string) => s.trim()).filter(Boolean)
       }
     }
 

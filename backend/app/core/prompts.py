@@ -90,6 +90,141 @@ DOMAIN_KNOWLEDGE: dict[str, dict[str, str]] = {
 
 
 # =============================================================================
+# 行业排放标准知识库（用于 AI Prompt 注入）
+# =============================================================================
+
+INDUSTRY_STANDARD_KNOWLEDGE: dict[str, dict[str, Any]] = {
+    "municipal_wastewater": {
+        "name": "城镇污水处理厂",
+        "standard": "GB 18918-2002",
+        "standard_name": "城镇污水处理厂污染物排放标准",
+        "limits": {
+            "一级A": {"COD": 50, "BOD5": 10, "SS": 10, "氨氮": 5, "总氮": 15, "总磷": 0.5},
+            "一级B": {"COD": 60, "BOD5": 20, "SS": 20, "氨氮": 8, "总氮": 20, "总磷": 1.0},
+            "二级": {"COD": 100, "BOD5": 30, "SS": 30, "氨氮": 25, "总氮": None, "总磷": 3.0},
+        },
+        "key_points": "关注出水氨氮与总氮的脱氮效率，生化系统的碳氮比是否合理；磷的去除需关注化学除磷药剂投加量",
+        "typical_issues": "进水负荷波动、碳源不足导致脱氮效率下降、污泥龄过长或过短",
+    },
+    "electroplating": {
+        "name": "电镀工业",
+        "standard": "GB 21900-2008",
+        "standard_name": "电镀污染物排放标准",
+        "limits": {
+            "表1": {"总铬": 1.0, "六价铬": 0.2, "总镍": 0.5, "总镉": 0.05, "总银": 0.3, "总铅": 0.2, "总汞": 0.005},
+            "表2": {"总铜": 0.5, "总锌": 1.5, "总铁": None, "COD": 80, "氨氮": 15},
+        },
+        "key_points": "重金属为核心管控指标，六价铬需特别关注；需要完善的分流收集系统和针对性处理工艺",
+        "typical_issues": "重金属混排导致处理效率下降、还原剂投加不足导致六价铬超标、污泥含重金属需危废处理",
+    },
+    "textile_dyeing": {
+        "name": "纺织染整工业",
+        "standard": "GB 4287-2012",
+        "standard_name": "纺织染整工业水污染物排放标准",
+        "limits": {
+            "直排": {"COD": 80, "BOD5": 20, "SS": 50, "氨氮": 10, "总氮": 15, "总磷": 0.5, "色度": 50},
+            "间排": {"COD": 200, "BOD5": 50, "SS": 100, "氨氮": 20, "总氮": 30, "总磷": 1.5, "色度": 80},
+        },
+        "key_points": "色度是纺织废水的特征污染物，需关注脱色工艺；COD与色度往往呈正相关",
+        "typical_issues": "染料种类变化导致处理效果波动、色度去除率不稳定、难降解有机物积累",
+    },
+    "thermal_power": {
+        "name": "火电厂",
+        "standard": "GB 13223-2011",
+        "standard_name": "火电厂大气污染物排放标准",
+        "limits": {
+            "一般地区": {"SO2": 100, "NOx": 100, "颗粒物": 30, "汞及其化合物": 0.03},
+            "重点地区": {"SO2": 50, "NOx": 50, "颗粒物": 20, "汞及其化合物": 0.03},
+        },
+        "key_points": "脱硫效率与浆液品质密切相关；SCR脱硝需关注催化剂活性和氨逃逸；布袋除尘压差反映滤袋状态",
+        "typical_issues": "脱硫塔结垢、SCR催化剂失活、布袋破损、CEMS数据漂移",
+    },
+    "pharmaceutical": {
+        "name": "制药工业",
+        "standard": "GB 21903-2008",
+        "standard_name": "制药工业水污染物排放标准",
+        "limits": {
+            "发酵类": {"COD": 120, "BOD5": 30, "SS": 50, "氨氮": 25, "总氮": 35, "总磷": 1.0},
+            "化学合成类": {"COD": 150, "BOD5": 30, "SS": 50, "氨氮": 25, "总氮": 35, "总磷": 1.0},
+        },
+        "key_points": "制药废水成分复杂，可生化性差；抗生素等特征污染物可能抑制生化系统",
+        "typical_issues": "间歇排放导致冲击负荷、有毒物质抑制微生物活性、难降解有机物需要预处理",
+    },
+    "paper_making": {
+        "name": "造纸工业",
+        "standard": "GB 3544-2008",
+        "standard_name": "制浆造纸工业水污染物排放标准",
+        "limits": {
+            "制浆": {"COD": 90, "BOD5": 20, "SS": 30, "氨氮": 8, "总磷": 0.8, "AOX": 8},
+            "造纸": {"COD": 90, "BOD5": 20, "SS": 30, "氨氮": 8, "总磷": 0.8},
+        },
+        "key_points": "黑液回收是制浆废水处理的关键；AOX（可吸附有机卤化物）是制浆废水的特征污染物",
+        "typical_issues": "黑液泄漏、高浓度COD冲击、纤维堵塞生化系统",
+    },
+    "petrochemical": {
+        "name": "石油化工",
+        "standard": "GB 31571-2015",
+        "standard_name": "石油化学工业污染物排放标准",
+        "limits": {
+            "直排": {"COD": 60, "BOD5": 20, "SS": 30, "氨氮": 8, "总氮": 20, "石油类": 3.0, "挥发酚": 0.3},
+            "间排": {"COD": 200, "BOD5": 50, "SS": 100, "氨氮": 25, "总氮": 40, "石油类": 10, "挥发酚": 0.5},
+        },
+        "key_points": "石油类和挥发酚是特征污染物；废水含油需要预处理隔油或气浮",
+        "typical_issues": "油类乳化导致分离困难、酚类抑制生化系统、有机硫化物影响处理效果",
+    },
+    "steel": {
+        "name": "钢铁工业",
+        "standard": "GB 13456-2012",
+        "standard_name": "钢铁工业水污染物排放标准",
+        "limits": {
+            "直排": {"COD": 50, "SS": 30, "氨氮": 5, "总氮": 15, "石油类": 3.0, "总铁": 2.0, "总锌": 1.0},
+            "间排": {"COD": 100, "SS": 70, "氨氮": 15, "总氮": 30, "石油类": 8.0, "总铁": 5.0, "总锌": 3.0},
+        },
+        "key_points": "重金属和悬浮物是主要污染物；酸洗废水需要中和处理；含油废水需要隔油预处理",
+        "typical_issues": "酸碱度波动大、重金属混排、悬浮物沉淀效果差",
+    },
+    "cement": {
+        "name": "水泥工业",
+        "standard": "GB 4915-2013",
+        "standard_name": "水泥工业大气污染物排放标准",
+        "limits": {
+            "窑及窑尾": {"颗粒物": 30, "NOx": 400, "SO2": 200, "氟化物": 3.0},
+            "破碎机及其他": {"颗粒物": 20},
+        },
+        "key_points": "NOx控制是水泥窑的主要挑战；SNCR/SCR脱硝效率受温度窗口影响",
+        "typical_issues": "窑况波动影响脱硝效率、粉尘泄漏、CEMS数据可靠性",
+    },
+    "other": {
+        "name": "其他（通用标准）",
+        "standard": "GB 8978-1996",
+        "standard_name": "污水综合排放标准",
+        "limits": {
+            "一级": {"COD": 100, "BOD5": 20, "SS": 70, "氨氮": 15, "总磷": 0.5, "石油类": 5.0},
+            "二级": {"COD": 150, "BOD5": 30, "SS": 150, "氨氮": 25, "总磷": 1.0, "石油类": 10},
+            "三级": {"COD": 500, "BOD5": 300, "SS": 400, "氨氮": None, "总磷": None, "石油类": 20},
+        },
+        "key_points": "综合排放标准适用于未制定行业标准的行业，限值相对宽松",
+        "typical_issues": "需根据实际排放去向（直排/间排）确定执行标准级别",
+    },
+}
+
+
+def get_industry_knowledge(industry_type: str | None) -> dict[str, Any] | None:
+    """
+    获取指定行业的标准知识。
+
+    Args:
+        industry_type: 行业类型代码
+
+    Returns:
+        行业标准知识字典，若未找到则返回 None
+    """
+    if not industry_type:
+        return None
+    return INDUSTRY_STANDARD_KNOWLEDGE.get(industry_type)
+
+
+# =============================================================================
 # 污染物代码前缀到领域的映射
 # =============================================================================
 
@@ -177,6 +312,7 @@ COMPREHENSIVE_DIAGNOSIS_TEMPLATE = """
 - 设备编号：{device_id}
 - 报告日期：{report_date}
 - 监测因子数量：{pollutant_count} 种
+{industry_context}
 
 # Observation (监测数据全览)
 以下是该设备今日所有监测因子的运行数据：
@@ -192,14 +328,24 @@ COMPREHENSIVE_DIAGNOSIS_TEMPLATE = """
 {pollutants_json}
 ```
 
+## 📈 小时级统计趋势
+以下为各污染物的小时级聚合数据（均值/峰值/谷值），用于识别日内变化规律：
+```
+{hourly_stats_text}
+```
+
 ## ⚠️ 异常因子汇总
 {anomaly_summary}
+
+{anomaly_events_text}
 
 # Constraints (严格约束 - 防幻觉机制)
 1. **依据事实**：严禁编造 Observation 中未提供的数据。
 2. **标准引用**：在判定异常时，必须依据{domain_standards}进行说明。
 3. **数值敏感**：如果数据异常，必须使用"**风险**"等警示词并加粗。
 4. **关联分析**：必须从污染物间的关联性角度进行分析（如 COD 与 BOD 关系、重金属间的协同变化等）。
+5. **事件关注**：重点关注异常事件摘要中的超标点、故障点和 AI 突变点。
+6. **趋势依据**：趋势研判必须明确引用小时级数据作为预测依据。
 
 # Task (任务目标)
 请撰写《智能运维诊断日报》，包含以下章节（Markdown格式）：
@@ -207,23 +353,57 @@ COMPREHENSIVE_DIAGNOSIS_TEMPLATE = """
 ## 1. 📊 运行综述
 - 用简练的专业术语总结今日整体运行状态
 - 列出需要重点关注的污染因子
+- 概述小时级变化趋势特征（如：上午平稳、下午攀升等）
 
 ## 2. ⚠️ 异常诊断
-- 分析各超标/高波动因子的可能工艺原因
-- 分析污染物之间的关联性（如：COD超标是否伴随氨氮上升？重金属指标是否协同变化？）
-- 结合趋势，判断是偶发性异常还是系统性问题
+**必须按以下三类事件分别诊断**（若某类无事件可注明"无"）：
+
+### 2.1 🔴 超标事件诊断
+- 逐一分析每个超标时刻的情况
+- 说明超标时的数值、超标幅度、持续时间
+- 结合前后小时数据，分析可能的工艺原因
+
+### 2.2 🟠 故障/异常时段诊断
+- 分析设备故障、数据缺失、通讯异常等时段
+- 评估故障对监测数据完整性的影响
+- 判断是设备问题还是工艺问题
+
+### 2.3 🟡 AI 突变点诊断
+- 分析 AI 检测到的数据突变事件
+- 说明突变幅度、发生时刻
+- 结合污染物关联性，推断可能原因（如：COD 突升是否伴随 pH 波动？）
+
+### 2.4 🔗 多因子关联分析
+- 分析污染物之间的协同变化关系
+- 判断是偶发性异常还是系统性问题
 - 参考方向：{domain_suggestions}
 
 ## 3. 🛠 运维建议
-给出 3-5 条具体的、针对{monitor_type}设备的现场排查或优化步骤，针对当前检测到的问题优先级排序。
+给出 3-5 条具体的、针对{monitor_type}设备的现场排查或优化步骤，按问题紧急程度排序：
+- 【紧急】需立即处理的问题
+- 【重要】需当日关注的问题
+- 【常规】日常优化建议
 
 ## 4. ⚖️ 合规风险评估
 - 评估当前的排放是否存在被环保局处罚的风险
+- **必须依据执行标准进行判定**{industry_standard_hint}
 - 指出哪些因子需要优先整改
-- 给出合规风险等级（低/中/高/紧急）
+- 给出合规风险等级（低/中/高/紧急）及判定依据
 
 ## 5. 📈 趋势研判
-基于当日数据特征，预判未来 24-48 小时可能出现的变化趋势和需要提前准备的应对措施。
+**必须基于小时级数据进行有依据的预测**：
+
+### 5.1 数据依据
+- 明确引用今日的小时级趋势规律（如：XX 因子在 14:00-18:00 呈上升趋势，峰值出现在 XX:00）
+- 指出关键时段的数据变化特征
+
+### 5.2 未来 24-48 小时预测
+- 基于今日趋势规律，预判明日可能的高风险时段
+- 若今日有超标/突变，预判是否可能再次发生
+
+### 5.3 预防性措施
+- 针对预测的风险点，给出提前准备的应对措施
+- 建议重点监控的时段和因子
 """
 
 
@@ -496,6 +676,10 @@ def build_comprehensive_diagnosis_prompt(
     pollutants_stats: list[dict[str, Any]],
     total_data_points: int,
     domain: str = "water",
+    hourly_stats_text: str = "",
+    anomaly_events_text: str = "",
+    industry_type: str | None = None,
+    national_standard: str | None = None,
 ) -> str:
     """
     构建综合诊断 Prompt（多污染物分析）。
@@ -507,6 +691,10 @@ def build_comprehensive_diagnosis_prompt(
         pollutants_stats: 各污染物的统计数据列表
         total_data_points: 总数据点数
         domain: 领域标识 (water/air/noise/soil)
+        hourly_stats_text: 小时级统计文本（格式：14:00, COD: 均值50/峰值200/谷值20）
+        anomaly_events_text: 异常事件摘要文本
+        industry_type: 行业类型代码（可选）
+        national_standard: 执行标准号（可选）
 
     Returns:
         格式化后的综合诊断 Prompt 字符串
@@ -515,6 +703,9 @@ def build_comprehensive_diagnosis_prompt(
 
     # 获取领域知识
     knowledge = get_domain_knowledge(domain)
+
+    # 获取行业标准知识
+    industry_knowledge = get_industry_knowledge(industry_type)
 
     # 统计综合指标
     over_limit_pollutant_count = sum(
@@ -527,7 +718,7 @@ def build_comprehensive_diagnosis_prompt(
         1 for p in pollutants_stats if p.get("volatility", 0) > 20
     )
 
-    # 构建污染物详细数据 JSON
+    # 构建污染物详细数据 JSON（不包含 hourly_stats 和 anomaly_events 以节省 Token）
     pollutants_detail = []
     for p in pollutants_stats:
         # 获取污染物名称
@@ -570,6 +761,38 @@ def build_comprehensive_diagnosis_prompt(
     else:
         anomaly_summary = "无异常因子，所有指标正常。"
 
+    # 如果没有提供小时级统计文本，则使用默认值
+    if not hourly_stats_text:
+        hourly_stats_text = "无小时级统计数据"
+
+    # 如果没有提供异常事件文本，则使用默认值
+    if not anomaly_events_text:
+        anomaly_events_text = "【异常事件摘要】\n无异常事件"
+
+    # 构建行业上下文信息
+    industry_context = ""
+    industry_standard_hint = ""
+    if industry_knowledge:
+        industry_context = f"""
+## 🏭 行业信息
+- 所属行业：{industry_knowledge["name"]}
+- 执行标准：{national_standard or industry_knowledge["standard"]}（{industry_knowledge["standard_name"]}）
+- 行业关键点：{industry_knowledge["key_points"]}
+- 常见问题：{industry_knowledge["typical_issues"]}
+
+### 排放限值参考
+"""
+        # 添加限值表
+        limits = industry_knowledge.get("limits", {})
+        for level, limit_dict in limits.items():
+            limit_items = [f"{k}: {v}" for k, v in limit_dict.items() if v is not None]
+            industry_context += f"- {level}：{', '.join(limit_items)}\n"
+
+        industry_standard_hint = f"（本设备执行 {national_standard or industry_knowledge['standard']}）"
+    elif national_standard:
+        industry_context = f"\n- 执行标准：{national_standard}"
+        industry_standard_hint = f"（本设备执行 {national_standard}）"
+
     # 格式化 Prompt
     prompt = COMPREHENSIVE_DIAGNOSIS_TEMPLATE.format(
         domain_standards=knowledge["standards"],
@@ -585,7 +808,11 @@ def build_comprehensive_diagnosis_prompt(
         total_over_limit_count=total_over_limit_count,
         high_volatility_count=high_volatility_count,
         pollutants_json=pollutants_json,
+        hourly_stats_text=hourly_stats_text,
         anomaly_summary=anomaly_summary,
+        anomaly_events_text=anomaly_events_text,
+        industry_context=industry_context,
+        industry_standard_hint=industry_standard_hint,
     )
 
     return prompt

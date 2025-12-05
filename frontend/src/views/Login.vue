@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
@@ -9,10 +9,25 @@ const route = useRoute()
 const authStore = useAuthStore()
 
 const loading = ref(false)
+const showPassword = ref(false)
+const rememberMe = ref(false)
 
 const form = reactive({
   username: '',
   password: ''
+})
+
+// Load saved credentials on mount
+onMounted(() => {
+  const savedUsername = localStorage.getItem('ecomind_username')
+  const savedPassword = localStorage.getItem('ecomind_password')
+  const savedRemember = localStorage.getItem('ecomind_remember')
+
+  if (savedRemember === 'true' && savedUsername) {
+    form.username = savedUsername
+    form.password = savedPassword || ''
+    rememberMe.value = true
+  }
 })
 
 // Nature background image
@@ -39,6 +54,18 @@ const handleLogin = async () => {
       username: form.username.trim(),
       password: form.password
     })
+
+    // Save or clear credentials based on remember me
+    if (rememberMe.value) {
+      localStorage.setItem('ecomind_username', form.username.trim())
+      localStorage.setItem('ecomind_password', form.password)
+      localStorage.setItem('ecomind_remember', 'true')
+    } else {
+      localStorage.removeItem('ecomind_username')
+      localStorage.removeItem('ecomind_password')
+      localStorage.removeItem('ecomind_remember')
+    }
+
     ElMessage.success('登录成功')
 
     const redirect = route.query.redirect as string
@@ -52,6 +79,10 @@ const handleLogin = async () => {
 
 const goToRegister = () => {
   router.push({ name: 'Register' })
+}
+
+const goToForgotPassword = () => {
+  router.push({ name: 'ForgotPassword' })
 }
 </script>
 
@@ -100,7 +131,7 @@ const goToRegister = () => {
         <p class="text-2xl font-light tracking-wide leading-relaxed text-white drop-shadow-lg">
           Empowering a greener future through intelligence.
         </p>
-        <p class="text-lg font-light mt-3 tracking-wider text-white drop-shadow-lg">
+        <p class="text-lg font-light mt-1 tracking-wider text-white drop-shadow-lg">
           通过智慧力量推动更绿色的未来
         </p>
       </div>
@@ -126,11 +157,11 @@ const goToRegister = () => {
       <div class="w-full max-w-[440px] space-y-12">
 
         <!-- Header Text Section -->
-        <div class="space-y-3">
-          <h1 class="text-5xl text-gray-900 font-bold tracking-tight text-left">
+        <div class="space-y-3 text-left">
+          <h1 class="text-5xl text-gray-900 font-bold tracking-normal">
             Welcome Back
           </h1>
-          <p class="text-gray-400 text-sm tracking-wide font-medium text-left">
+          <p class="text-gray-400 text-sm tracking-normal font-medium">
             YueenEcoMind-AI 智慧环保中台
           </p>
         </div>
@@ -150,31 +181,58 @@ const goToRegister = () => {
 
             <!-- Password Input -->
             <div class="space-y-2">
-              <input
-                v-model="form.password"
-                name="password"
-                type="password"
-                placeholder="Password 密码"
-                required
-                @keyup.enter="handleLogin"
-                class="w-full px-6 py-4 bg-white border border-gray-200 rounded-2xl text-gray-800 placeholder-gray-400 shadow-[0_4px_16px_rgba(0,0,0,0.06)] focus:outline-none focus:bg-white focus:ring-0 focus:shadow-[0_8px_24px_rgba(11,23,39,0.12)] focus:border-[#0B1727]/30 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] transition-all duration-300 ease-out text-base"
-              />
-              <!-- Forgot Password Link -->
-              <div class="flex justify-end pt-1">
+              <div class="relative">
+                <input
+                  v-model="form.password"
+                  name="password"
+                  :type="showPassword ? 'text' : 'password'"
+                  placeholder="Password 密码"
+                  required
+                  @keyup.enter="handleLogin"
+                  class="w-full px-6 py-4 pr-12 bg-white border border-gray-200 rounded-2xl text-gray-800 placeholder-gray-400 shadow-[0_4px_16px_rgba(0,0,0,0.06)] focus:outline-none focus:bg-white focus:ring-0 focus:shadow-[0_8px_24px_rgba(11,23,39,0.12)] focus:border-[#0B1727]/30 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] transition-all duration-300 ease-out text-base"
+                />
+                <!-- Password Visibility Toggle -->
+                <button
+                  type="button"
+                  @click="showPassword = !showPassword"
+                  class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors duration-200 focus:outline-none"
+                >
+                  <!-- Eye Open Icon -->
+                  <svg v-if="!showPassword" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  <!-- Eye Closed Icon -->
+                  <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                  </svg>
+                </button>
+              </div>
+              <!-- Remember Me & Forgot Password -->
+              <div class="flex items-center justify-between pt-2 px-6">
+                <label class="flex items-center gap-2.5 cursor-pointer group">
+                  <div class="relative">
+                    <input
+                      v-model="rememberMe"
+                      type="checkbox"
+                      class="peer sr-only"
+                    />
+                    <div class="w-4 h-4 bg-white border border-gray-200 rounded-md shadow-[0_4px_16px_rgba(0,0,0,0.06)] peer-checked:bg-eco-blue peer-checked:border-eco-blue peer-focus:shadow-[0_8px_24px_rgba(11,23,39,0.12)] hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] transition-all duration-300 cursor-pointer"></div>
+                    <svg class="absolute top-0.5 left-0.5 w-3 h-3 text-white opacity-0 peer-checked:opacity-100 transition-opacity duration-200 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <span class="text-gray-400 text-xs tracking-wide font-medium group-hover:text-gray-500 transition-colors duration-200">记住密码</span>
+                </label>
                 <a
+                  @click.prevent="goToForgotPassword"
                   href="#"
-                  class="text-gray-400 text-xs hover:text-eco-blue transition-colors duration-300 font-medium"
+                  class="text-gray-400 text-xs tracking-wide font-medium hover:text-eco-blue transition-colors duration-200 cursor-pointer"
                 >
                   忘记密码？
                 </a>
               </div>
             </div>
-          </div>
-
-          <!-- Demo Account Hint -->
-          <div class="bg-[#F7F8FA] rounded-xl px-4 py-3 flex items-center justify-between">
-            <span class="text-gray-400 text-xs">演示账号</span>
-            <span class="text-gray-700 text-sm font-mono font-medium">admin / admin123</span>
           </div>
 
           <!-- Submit Button -->
