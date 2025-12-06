@@ -158,6 +158,7 @@ class PollutantThreshold(BaseModel):
 
     pollutant_code: str = Field(..., description="污染物代码，如 w01018")
     pollutant_name: str = Field(default="", description="污染物名称，如 COD")
+    enabled: bool = Field(default=True, description="是否启用该污染物阈值")
     warning_value: float = Field(..., ge=0, description="预警值")
     alarm_value: float = Field(..., ge=0, description="报警值")
     unit: str = Field(default="mg/L", description="单位")
@@ -169,10 +170,13 @@ class ThresholdConfig(BaseModel):
     enabled: bool = Field(default=True, description="是否启用阈值检测")
     pollutants: list[PollutantThreshold] = Field(default_factory=list, description="各污染物阈值")
 
-    def get_threshold(self, pollutant_code: str) -> PollutantThreshold | None:
+    def get_threshold(self, pollutant_code: str, include_disabled: bool = False) -> PollutantThreshold | None:
         """Get threshold for a specific pollutant."""
         for p in self.pollutants:
             if p.pollutant_code == pollutant_code:
+                # Ignore disabled thresholds unless explicitly requested
+                if not include_disabled and getattr(p, "enabled", True) is False:
+                    return None
                 return p
         return None
 

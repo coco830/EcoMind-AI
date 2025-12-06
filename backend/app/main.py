@@ -156,8 +156,10 @@ async def init_superadmin(secret: str) -> dict:
 
     Protected by a secret key to prevent unauthorized access.
     """
-    # Security check - must provide correct secret
-    if secret != "ecomind-init-2024-secure":
+    import os
+    # Security check - must provide correct secret from environment
+    expected_secret = os.getenv("INIT_SECRET", "")
+    if not expected_secret or secret != expected_secret:
         return {"success": False, "message": "Invalid secret"}
 
     from sqlalchemy import select
@@ -166,9 +168,13 @@ async def init_superadmin(secret: str) -> dict:
     from app.models.organization import Organization
     from app.core.security import get_password_hash
 
-    SUPERADMIN_USERNAME = "huanbao"
-    SUPERADMIN_EMAIL = "yueenhb@163.com"
-    SUPERADMIN_PASSWORD = "huanbao@123"
+    # Get superadmin credentials from environment variables
+    SUPERADMIN_USERNAME = os.getenv("SUPERADMIN_USERNAME", "admin")
+    SUPERADMIN_EMAIL = os.getenv("SUPERADMIN_EMAIL", "admin@example.com")
+    SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "")
+
+    if not SUPERADMIN_PASSWORD:
+        return {"success": False, "message": "SUPERADMIN_PASSWORD environment variable is required"}
 
     async with AsyncSessionLocal() as db:
         # Check if superadmin already exists

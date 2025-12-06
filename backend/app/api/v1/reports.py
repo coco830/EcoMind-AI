@@ -115,7 +115,8 @@ def _parse_thresholds(device: Device) -> dict[str, float]:
             config = ThresholdConfig.model_validate_json(device.thresholds)
             if config.enabled:
                 for pollutant in config.pollutants:
-                    thresholds[pollutant.pollutant_code] = pollutant.alarm_value
+                    if getattr(pollutant, "enabled", True) and pollutant.alarm_value > 0:
+                        thresholds[pollutant.pollutant_code] = pollutant.alarm_value
         except Exception:
             pass
     return thresholds

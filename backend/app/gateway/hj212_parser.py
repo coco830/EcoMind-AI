@@ -44,6 +44,11 @@ class HJ212Packet:
         """Check if this is heartbeat packet."""
         return self.cn == "9014"
 
+    @property
+    def is_login(self) -> bool:
+        """Check if this is device login request (CN=9021)."""
+        return self.cn == "9021"
+
 
 class HJ212Parser:
     """Parser for HJ 212 protocol packets."""
@@ -175,13 +180,19 @@ class HJ212Parser:
         packet: HJ212Packet,
         result_code: int = 1,
         result_info: str = "",
+        error: bool = False,
     ) -> bytes:
         """Build response packet for acknowledgment."""
         qn = datetime.now().strftime("%Y%m%d%H%M%S") + "000"
         st = packet.st or "91"
-        cn = "9014"  # Ack command
         pw = packet.pw or "123456"
         mn = packet.mn
+
+        # 根据请求类型决定响应命令
+        if packet.is_login:
+            cn = "9022"  # 登录响应
+        else:
+            cn = "9014"  # 通用确认
 
         cp_content = f"QnRtn={result_code}"
         if result_info:

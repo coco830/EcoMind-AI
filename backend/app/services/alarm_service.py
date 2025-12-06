@@ -665,6 +665,12 @@ async def check_thresholds_and_create_alarms(
     if not threshold:
         return alarms
 
+    # Skip disabled or zero thresholds
+    if getattr(threshold, "enabled", True) is False:
+        return alarms
+    if threshold.warning_value <= 0 and threshold.alarm_value <= 0:
+        return alarms
+
     # Check alarm level (higher threshold)
     if value >= threshold.alarm_value:
         alarm = await alarm_service.create_threshold_alarm(

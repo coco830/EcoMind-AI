@@ -45,18 +45,23 @@ class GUID(TypeDecorator):
 settings = get_settings()
 
 # Configure engine based on database type
-# Priority: DATABASE_URL env var > mysql_url (if mysql_password set) > postgres_url > sqlite
-db_url = settings.database_url
-if db_url.startswith("mysql"):
+# Priority: mysql_url (if mysql_password set) > DATABASE_URL env var > postgres_url > sqlite
+# Re-fetch settings to ensure environment variables are loaded
+from app.core.config import Settings
+_fresh_settings = Settings()  # Don't use cache to ensure env vars are read
+
+if _fresh_settings.mysql_password:
+    # MySQL configured via separate env vars (CloudBase)
+    db_url = _fresh_settings.mysql_url
+elif _fresh_settings.database_url.startswith("mysql"):
     # Already a MySQL URL from DATABASE_URL
-    pass
-elif settings.mysql_password:
-    # MySQL configured via separate env vars
-    db_url = settings.mysql_url
-elif settings.postgres_password:
+    db_url = _fresh_settings.database_url
+elif _fresh_settings.postgres_password:
     # PostgreSQL configured
-    db_url = settings.postgres_url
-# else: use default sqlite from database_url
+    db_url = _fresh_settings.postgres_url
+else:
+    # Default to sqlite
+    db_url = _fresh_settings.database_url
 
 is_sqlite = db_url.startswith("sqlite")
 is_mysql = db_url.startswith("mysql")

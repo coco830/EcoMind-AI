@@ -214,19 +214,26 @@ async def create_device(
     """Create a new device. Non-superadmin users can only create devices in their own org."""
     import structlog
     logger = structlog.get_logger()
-    logger.info("Creating device", mn=device_data.mn, name=device_data.name, org_id=str(device_data.org_id) if device_data.org_id else "None", user_org=str(current_user.org_id))
+    logger.info("Creating device", mn=device_data.mn, name=device_data.name, org_id=str(device_data.org_id) if device_data.org_id else "None", user_org=str(current_user.org_id) if current_user.org_id else "None")
 
     # Determine the organization ID first
     org_id = device_data.org_id
 
-    # If org_id not provided, use current user's organization
+    # If org_id not provided
     if org_id is None:
-        if current_user.org_id is None:
+        if current_user.is_superadmin:
+            # Superadmin must specify org_id when creating devices
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Superadmin must specify org_id when creating devices",
+            )
+        elif current_user.org_id is None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User must belong to an organization to create devices",
             )
-        org_id = current_user.org_id
+        else:
+            org_id = current_user.org_id
 
     # Check organization access for non-superadmin users
     if not current_user.is_superadmin:

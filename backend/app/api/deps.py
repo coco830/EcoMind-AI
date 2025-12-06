@@ -72,7 +72,10 @@ async def require_admin(
 async def require_operator(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
-    """Require operator or admin role."""
+    """Require operator or admin role; allow superadmin bypass."""
+    if current_user.is_superadmin:
+        return current_user
+
     if current_user.role not in [UserRole.ADMIN.value, UserRole.OPERATOR.value]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

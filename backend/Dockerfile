@@ -39,4 +39,5 @@ COPY . .
 EXPOSE 8000 9880
 
 # Run application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Enable --proxy-headers so FastAPI/Starlette respects X-Forwarded-Proto from the HTTPS ingress
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

@@ -101,8 +101,11 @@ class Settings(BaseSettings):
     @property
     def mysql_url(self) -> str:
         """MySQL connection URL for SQLAlchemy."""
+        from urllib.parse import quote_plus
+        # URL encode password to handle special characters like @
+        encoded_password = quote_plus(self.mysql_password)
         return (
-            f"mysql+aiomysql://{self.mysql_user}:{self.mysql_password}"
+            f"mysql+aiomysql://{self.mysql_user}:{encoded_password}"
             f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_db}?charset=utf8mb4"
         )
 
@@ -249,6 +252,9 @@ class Settings(BaseSettings):
     # Password Reset
     password_reset_expire_minutes: int = 30  # Token expires in 30 minutes
     frontend_url: str = "http://localhost:3000"  # Frontend URL for reset links
+
+    # Gateway API Key (for HTTP forwarding from TCP proxy)
+    gateway_api_key: str = "ecomind-gateway-key-2024"  # Should be changed in production
 
     @property
     def cors_origins(self) -> list[str]:

@@ -16,6 +16,7 @@ from app.models.base import BaseSchema
 class UserRole(str, Enum):
     """User role enumeration."""
 
+    SUPER_ADMIN = "super_admin"
     ADMIN = "admin"
     OPERATOR = "operator"
     VIEWER = "viewer"

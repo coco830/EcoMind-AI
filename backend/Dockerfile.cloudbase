@@ -9,17 +9,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai
 
-# 使用阿里云镜像源加速 apt-get
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y --no-install-recommends \
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
-COPY requirements.txt requirements.txt
+# 复制依赖文件（使用云托管精简版依赖）
+COPY requirements-cloudbase.txt requirements.txt
 
-# 安装 Python 依赖（使用国内镜像加速）
-RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt
+# 安装 Python 依赖（使用腾讯云镜像加速）
+RUN pip install --no-cache-dir -i https://mirrors.cloud.tencent.com/pypi/simple/ -r requirements.txt
 
 # 复制应用代码
 COPY app/ ./app/
@@ -29,9 +28,6 @@ COPY alembic.ini .
 # 暴露端口
 EXPOSE 8000
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# 启动命令（单 worker，适合云托管弹性伸缩）
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 启动命令
+# 注意开启 --proxy-headers 以识别反向代理传递的 X-Forwarded-Proto，从而避免 HTTPS 环境下重定向到 HTTP
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

@@ -20,6 +20,7 @@ from app.db.postgres import AsyncSessionLocal
 from app.models.device import Device, DeviceStatus
 from app.models.daily_report import DailyReport, ReportStatus
 from app.services.data_analysis_service import DataAnalysisService
+from app.services.monitoring_service import MonitoringService
 from app.core.prompts import (
     build_comprehensive_diagnosis_prompt,
     get_domain_from_pollutant_code,
@@ -309,6 +310,45 @@ async def generate_daily_reports_job():
     return results
 
 
+async def aggregate_monitoring_data_job():
+    """定时任务：聚合昨日监测数据为每日统计。
+
+    此任务每天凌晨 01:00 执行，将昨日的原始监测数据
+    聚合为每日统计记录，用于热力图和趋势分析。
+    """
+    logger.info("Starting monitoring data aggregation job")
+
+    # 目标日期为昨天
+    target_date = date.today() - timedelta(days=1)
+
+    try:
+        async with AsyncSessionLocal() as db:
+            service = MonitoringService(db)
+            count = await service.aggregate_daily_stats(target_date)
+
+            logger.info(
+                "Monitoring data aggregation completed",
+                target_date=target_date.isoformat(),
+                aggregated_count=count,
+            )
+
+            return {
+                "status": "success",
+                "target_date": target_date.isoformat(),
+                "aggregated_count": count,
+            }
+
+    except Exception as e:
+        logger.error(
+            "Monitoring data aggregation failed",
+            error=str(e),
+        )
+        return {
+            "status": "failed",
+            "error": str(e),
+        }
+
+
 def setup_scheduler(app=None):
     """配置并启动定时任务调度器。
 
@@ -316,6 +356,25 @@ def setup_scheduler(app=None):
         app: FastAPI 应用实例（可选，用于存储调度器引用）
     """
     scheduler = get_scheduler()
+
+    # 添加监测数据聚合任务
+    # 每天凌晨 01:00 执行（在日报生成之前）
+    scheduler.add_job(
+        aggregate_monitoring_data_job,
+        CronTrigger(
+            hour=1,
+            minute=0,
+            timezone="Asia/Shanghai",
+        ),
+        id="monitoring_aggregation_job",
+        name="Aggregate Daily Monitoring Data",
+        replace_existing=True,
+    )
+
+    logger.info(
+        "Scheduled monitoring aggregation job",
+        schedule="Every day at 01:00 (Asia/Shanghai)",
+    )
 
     # 添加每日报告生成任务
     # 每天凌晨 02:00 执行
