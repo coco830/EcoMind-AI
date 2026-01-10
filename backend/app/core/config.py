@@ -230,6 +230,10 @@ class Settings(BaseSettings):
     spark_api_url: str = "wss://spark-api.xf-yun.com/chat/pro-128k"
     spark_domain: str = "pro-128k"
 
+    # Baidu OCR (百度文字识别)
+    baidu_ocr_api_key: str = ""
+    baidu_ocr_secret_key: str = ""
+
     # CORS Configuration
     allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"  # Comma-separated list
 

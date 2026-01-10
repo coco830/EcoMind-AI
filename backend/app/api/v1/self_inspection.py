@@ -37,7 +37,10 @@ from app.services.self_inspection_service import (
     AIDataExtractor,
     AIReportGenerator,
     get_self_inspection_service,
+    get_baidu_ocr_client,
+    get_ai_data_extractor,
 )
+from app.services.llm import get_spark_client
 from app.core.config import get_settings
 
 router = APIRouter()
@@ -147,13 +150,11 @@ async def upload_and_ocr(
     raw_text = None
     ai_extracted_info = {}
 
-    # 检查是否配置了百度OCR
-    baidu_api_key = os.getenv("BAIDU_OCR_API_KEY", "")
-    baidu_secret_key = os.getenv("BAIDU_OCR_SECRET_KEY", "")
+    # 检查是否配置了百度OCR（从环境变量读取）
+    ocr_client = get_baidu_ocr_client()
 
-    if baidu_api_key and baidu_secret_key:
+    if ocr_client:
         try:
-            ocr_client = BaiduOCRClient(baidu_api_key, baidu_secret_key)
 
             # 根据文件类型选择OCR方式
             is_pdf = file.content_type == "application/pdf"
@@ -185,19 +186,9 @@ async def upload_and_ocr(
             logger.info("OCR completed", raw_text_length=len(raw_text) if raw_text else 0)
 
             # 使用AI智能解析
-            if use_ai_parsing and raw_text and settings.spark_app_id and settings.spark_api_key:
+            ai_extractor = get_ai_data_extractor() if use_ai_parsing else None
+            if ai_extractor and raw_text:
                 try:
-                    from app.services.llm.spark_client import SparkClient
-
-                    spark_client = SparkClient(
-                        app_id=settings.spark_app_id,
-                        api_secret=settings.spark_api_secret,
-                        api_key=settings.spark_api_key,
-                        spark_url=settings.spark_api_url,
-                        domain=settings.spark_domain,
-                    )
-
-                    ai_extractor = AIDataExtractor(spark_client)
                     ai_extracted_info = await ai_extractor.extract_inspection_data(
                         ocr_text=raw_text,
                         file_name=file.filename,
@@ -577,8 +568,9 @@ async def generate_ai_report(
             detail="指定时间范围内没有已校验的数据",
         )
 
-    # 检查是否配置了讯飞星火
-    if not settings.spark_app_id or not settings.spark_api_key:
+    # 检查是否配置了讯飞星火（从环境变量读取）
+    spark_client = get_spark_client()
+    if not spark_client:
         # 返回简化版报告（无AI）
         period = f"{request.start_date} 至 {request.end_date}"
         stats_lines = [
@@ -593,16 +585,6 @@ async def generate_ai_report(
         )
 
     # 使用AI生成报告
-    from app.services.llm.spark_client import SparkClient
-
-    spark_client = SparkClient(
-        app_id=settings.spark_app_id,
-        api_secret=settings.spark_api_secret,
-        api_key=settings.spark_api_key,
-        spark_url=settings.spark_api_url,
-        domain=settings.spark_domain,
-    )
-
     generator = AIReportGenerator(spark_client)
 
     # 获取组织名称

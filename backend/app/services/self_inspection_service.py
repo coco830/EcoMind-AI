@@ -41,14 +41,26 @@ class BaiduOCRClient:
     TOKEN_URL = "https://aip.baidubce.com/oauth/2.0/token"
     # 通用文字识别（高精度版）
     OCR_URL = "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic"
-    # 表格文字识别
+    # 表格文字识别V2
     TABLE_OCR_URL = "https://aip.baidubce.com/rest/2.0/ocr/v1/table"
     # 通用文字识别（含位置信息）
     GENERAL_OCR_URL = "https://aip.baidubce.com/rest/2.0/ocr/v1/general"
 
-    def __init__(self, api_key: str, secret_key: str):
-        self.api_key = api_key
-        self.secret_key = secret_key
+    def __init__(self, api_key: str | None = None, secret_key: str | None = None):
+        """
+        初始化百度OCR客户端
+
+        Args:
+            api_key: 百度OCR API Key，若为None则从环境变量读取
+            secret_key: 百度OCR Secret Key，若为None则从环境变量读取
+        """
+        # 从配置读取（优先使用传入参数）
+        self.api_key = api_key or settings.baidu_ocr_api_key
+        self.secret_key = secret_key or settings.baidu_ocr_secret_key
+
+        if not self.api_key or not self.secret_key:
+            logger.warning("Baidu OCR credentials not configured")
+
         self._access_token: str | None = None
         self._token_expires: datetime | None = None
 
@@ -1017,3 +1029,34 @@ class AIReportGenerator:
 def get_self_inspection_service(db_session: AsyncSession) -> SelfInspectionService:
     """获取自检档案服务实例"""
     return SelfInspectionService(db_session)
+
+
+def get_baidu_ocr_client() -> BaiduOCRClient | None:
+    """
+    获取配置好的百度OCR客户端实例
+
+    Returns:
+        BaiduOCRClient实例，如果未配置则返回None
+    """
+    if not settings.baidu_ocr_api_key or not settings.baidu_ocr_secret_key:
+        logger.warning("Baidu OCR credentials not configured in environment variables")
+        return None
+
+    return BaiduOCRClient()
+
+
+def get_ai_data_extractor() -> AIDataExtractor | None:
+    """
+    获取配置好的AI数据提取器实例
+
+    Returns:
+        AIDataExtractor实例，如果未配置则返回None
+    """
+    from app.services.llm import get_spark_client
+
+    spark_client = get_spark_client()
+    if not spark_client:
+        logger.warning("Spark client not configured, AI extraction unavailable")
+        return None
+
+    return AIDataExtractor(spark_client)
