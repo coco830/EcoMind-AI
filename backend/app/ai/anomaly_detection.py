@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """AI-based anomaly detection using IsolationForest algorithm.
 
 This module provides:
@@ -17,10 +19,12 @@ import structlog
 from sqlalchemy import select
 from sklearn.ensemble import IsolationForest
 
-from app.db.tdengine_client import get_tdengine_client
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.db.postgres import AsyncSessionLocal
 from app.models.device import Device
 from app.services.alarm_service import AlarmService
+from app.services.monitoring_service import MonitoringService
 
 logger = structlog.get_logger()
 
@@ -432,10 +436,11 @@ async def detect_anomalies(
     pollutant_code: str = "w01018",
     hours: int = 24,
     create_alarms: bool = False,
+    db_session: AsyncSession | None = None,
 ) -> dict[str, Any]:
     """High-level function to detect anomalies for a device.
 
-    Fetches data from TDengine and runs anomaly detection.
+    Fetches data from MySQL and runs anomaly detection.
     Optionally creates alarms for detected anomalies.
 
     Args:
@@ -443,6 +448,7 @@ async def detect_anomalies(
         pollutant_code: Pollutant code (default: w01018 for COD)
         hours: Hours of historical data to analyze
         create_alarms: If True, create alarms for detected anomalies
+        db_session: Optional database session (creates one if not provided)
 
     Returns:
         Dictionary containing:
@@ -454,19 +460,30 @@ async def detect_anomalies(
         - summary: Summary statistics
         - alarms_created: Number of alarms created (if create_alarms=True)
     """
-    client = get_tdengine_client()
+    # Use local time with timezone buffer
+    end_time = datetime.now() + timedelta(hours=9)  # UTC+8 buffer
+    start_time = end_time - timedelta(hours=hours + 9)
 
-    end_time = datetime.utcnow()
-    start_time = end_time - timedelta(hours=hours)
-
-    # Query historical data
-    data = await client.query_monitoring_data(
-        device_id=device_id,
-        pollutant_code=pollutant_code,
-        start_time=start_time,
-        end_time=end_time,
-        limit=5000,  # Max points for 24h at 1-min intervals
-    )
+    # 使用 MySQL MonitoringService 查询历史数据
+    if db_session:
+        service = MonitoringService(db_session)
+        data = await service.query_monitoring_data(
+            device_id=device_id,
+            pollutant_code=pollutant_code,
+            start_time=start_time,
+            end_time=end_time,
+            limit=5000,  # Max points for 24h at 1-min intervals
+        )
+    else:
+        async with AsyncSessionLocal() as session:
+            service = MonitoringService(session)
+            data = await service.query_monitoring_data(
+                device_id=device_id,
+                pollutant_code=pollutant_code,
+                start_time=start_time,
+                end_time=end_time,
+                limit=5000,  # Max points for 24h at 1-min intervals
+            )
 
     if not data:
         return {

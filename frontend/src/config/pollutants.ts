@@ -15,7 +15,7 @@ export const POLLUTANT_MAP: Record<string, PollutantInfo> = {
   // =========================================================================
   // 常规五参数 & 物理指标
   // =========================================================================
-  'w00000': { name: '瞬时流量', unit: 'L/s', precision: 2, category: 'physical' },
+  'w00000': { name: '瞬时流量', unit: 'm³/h', precision: 2, category: 'physical' },
   'w00001': { name: '累计流量', unit: 'm³', precision: 2, category: 'physical' },
   'w01001': { name: 'pH值', unit: '无量纲', precision: 2, category: 'physical' },
   'w01010': { name: '水温', unit: '℃', precision: 1, category: 'physical' },

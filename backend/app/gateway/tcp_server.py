@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """TCP Gateway Server for HJ 212 Protocol Data Collection.
 
 支持宽表模式：将同一时间点的所有污染物一次性写入数据库。
@@ -19,7 +21,8 @@ import structlog
 from app.core.config import get_settings
 from app.core.encryption import get_sm4_cipher
 from app.core.pollutant_library import is_known_pollutant, get_pollutant_name
-from app.db.tdengine import get_tdengine_client
+from app.db.postgres import AsyncSessionLocal
+from app.services.monitoring_service import MonitoringService
 from app.gateway.hj212_parser import HJ212Parser, HJ212Packet
 from app.gateway.device_registry import get_device_registry, DeviceInfo
 
@@ -284,8 +287,6 @@ class TCPGateway:
         data_time = packet.cp.get("DataTime", datetime.utcnow())
         pollutants: dict[str, dict[str, Any]] = packet.cp["pollutants"]
 
-        tdengine = get_tdengine_client()
-
         # 确定数据类型
         if packet.is_realtime:
             data_type = "realtime"
@@ -313,57 +314,49 @@ class TCPGateway:
                 unknown_codes=unknown_codes,
             )
 
-        # 方式1: 宽表模式 - 一次性写入所有污染物 (推荐)
+        # 使用 MySQL MonitoringService 批量写入数据
         try:
-            success = await tdengine.insert_wide_monitoring_data(
-                device_id=packet.mn,
-                org_id=org_id,  # Now using authenticated org_id
-                timestamp=data_time,
-                pollutants=pollutants,
-                data_type=data_type,
-            )
-            if success:
-                logger.debug(
-                    "Wide table insert successful",
-                    mn=packet.mn,
-                    org_id=org_id,
-                    pollutant_count=len(pollutants),
-                )
+            async with AsyncSessionLocal() as db_session:
+                service = MonitoringService(db_session)
+
+                # 构建批量插入数据
+                batch_data = []
+                for pol_code, pol_data in pollutants.items():
+                    # Get value (prefer Rtd for realtime, Avg for averages)
+                    value = pol_data.get("Rtd") or pol_data.get("Avg")
+                    if value is None:
+                        continue
+
+                    flag = pol_data.get("Flag", "N")
+
+                    batch_data.append({
+                        "device_id": packet.mn,
+                        "org_id": org_id,
+                        "pollutant_code": pol_code,
+                        "ts": data_time,
+                        "value": float(value),
+                        "flag": str(flag),
+                        "status": 0,
+                        "data_type": data_type,
+                    })
+
+                # 批量插入到 MySQL
+                if batch_data:
+                    inserted_count = await service.insert_batch_monitoring_data(batch_data)
+                    logger.debug(
+                        "MySQL batch insert successful",
+                        mn=packet.mn,
+                        org_id=org_id,
+                        pollutant_count=len(batch_data),
+                        inserted=inserted_count,
+                    )
         except Exception as e:
             logger.error(
-                "Wide table insert failed",
+                "Failed to insert monitoring data to MySQL",
                 mn=packet.mn,
                 org_id=org_id,
                 error=str(e),
             )
-
-        # 方式2: 窄表模式 - 兼容旧API (可选，保持向后兼容)
-        for pol_code, pol_data in pollutants.items():
-            # Get value (prefer Rtd for realtime, Avg for averages)
-            value = pol_data.get("Rtd") or pol_data.get("Avg")
-            if value is None:
-                continue
-
-            flag = pol_data.get("Flag", "N")
-
-            try:
-                await tdengine.insert_monitoring_data(
-                    device_id=packet.mn,
-                    pollutant_code=pol_code,
-                    org_id=org_id,  # Now using authenticated org_id
-                    ts=data_time,
-                    value=float(value),
-                    flag=str(flag),
-                    status=0,
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed to insert monitoring data (narrow table)",
-                    mn=packet.mn,
-                    org_id=org_id,
-                    pollutant=pol_code,
-                    error=str(e),
-                )
 
         # 记录处理结果
         pol_names = [get_pollutant_name(c) for c in known_codes[:5]]

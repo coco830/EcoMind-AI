@@ -5,6 +5,7 @@ from typing import Any
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from passlib.exc import UnknownHashError
 
 from app.core.config import get_settings
 
@@ -16,13 +17,19 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain password against a hashed password."""
+    if not hashed_password:
+        return False
     # Handle legacy SHA256 hashes if any exist
     if hashed_password.startswith("sha256:"):
         import hashlib
         expected = "sha256:" + hashlib.sha256(plain_password.encode()).hexdigest()
         return hashed_password == expected
     # Standard bcrypt verification
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except (UnknownHashError, ValueError, TypeError):
+        # Unknown/invalid hash format should never crash login flows
+        return False
 
 
 def get_password_hash(password: str) -> str:

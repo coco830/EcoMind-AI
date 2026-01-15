@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 """Organization models."""
 
 from datetime import datetime
+from enum import Enum
+from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import Field
@@ -9,6 +13,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.postgres import Base, GUID
 from app.models.base import BaseSchema
+
+
+class OrganizationStatus(str, Enum):
+    """Organization status enum."""
+    ACTIVE = "active"
+    INACTIVE = "inactive"
 
 
 class Organization(Base):
@@ -21,9 +31,12 @@ class Organization(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    address: Mapped[str | None] = mapped_column(String(512))
-    contact_name: Mapped[str | None] = mapped_column(String(64))
-    contact_phone: Mapped[str | None] = mapped_column(String(20))
+    address: Mapped[Optional[str]] = mapped_column(String(512))
+    contact_name: Mapped[Optional[str]] = mapped_column(String(64))
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(
+        String(20), default=OrganizationStatus.ACTIVE.value, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -35,6 +48,7 @@ class Organization(Base):
     users: Mapped[list["User"]] = relationship(back_populates="organization")
     devices: Mapped[list["Device"]] = relationship(back_populates="organization")
     invitation_codes: Mapped[list["InvitationCode"]] = relationship(back_populates="organization")
+    self_inspection_reports: Mapped[list["SelfInspectionReport"]] = relationship(back_populates="organization")
 
 
 class OrganizationCreate(BaseSchema):
@@ -42,9 +56,9 @@ class OrganizationCreate(BaseSchema):
 
     name: str = Field(..., min_length=1, max_length=255)
     code: str = Field(..., min_length=1, max_length=64)
-    address: str | None = Field(None, max_length=512)
-    contact_name: str | None = Field(None, max_length=64)
-    contact_phone: str | None = Field(None, max_length=20)
+    address: Optional[str] = Field(None, max_length=512)
+    contact_name: Optional[str] = Field(None, max_length=64)
+    contact_phone: Optional[str] = Field(None, max_length=20)
 
 
 class OrganizationResponse(BaseSchema):
@@ -53,9 +67,10 @@ class OrganizationResponse(BaseSchema):
     id: UUID
     name: str
     code: str
-    address: str | None = None
-    contact_name: str | None = None
-    contact_phone: str | None = None
+    address: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    status: str = OrganizationStatus.ACTIVE.value
     created_at: datetime
     updated_at: datetime
 
@@ -64,3 +79,4 @@ class OrganizationResponse(BaseSchema):
 from app.models.user import User
 from app.models.device import Device
 from app.models.invitation import InvitationCode
+from app.models.self_inspection import SelfInspectionReport

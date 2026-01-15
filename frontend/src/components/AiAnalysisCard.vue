@@ -2,6 +2,7 @@
 import { ref, computed, nextTick, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { useAuthStore } from '@/stores/auth'
+import { apiBasePath } from '@/api/request'
 
 // Props
 const props = defineProps<{
@@ -55,7 +56,6 @@ const startAnalysis = async () => {
   isLoading.value = true
   isStreaming.value = false
 
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
   const params = new URLSearchParams({
     device_id: props.deviceId,
     device_name: props.deviceName || props.deviceId,
@@ -67,7 +67,7 @@ const startAnalysis = async () => {
     params.set('pollutant', props.pollutant)
   }
 
-  const url = `${baseUrl}/api/v1/ai/report/stream?${params}`
+  const url = `${apiBasePath}/ai/report/stream?${params}`
 
   try {
     const headers: Record<string, string> = {
@@ -197,7 +197,7 @@ watch([() => props.deviceId, () => props.pollutant], () => {
               </linearGradient>
             </defs>
           </svg>
-          <span class="title">AI 智能诊断</span>
+          <span class="title">悦恩AI智能诊断</span>
           <!-- 显示当前选中的设备 -->
           <el-tag v-if="deviceName" type="info" size="small" class="device-tag">
             {{ deviceName }}

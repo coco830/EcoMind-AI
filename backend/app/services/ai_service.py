@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 AI 诊断服务
 

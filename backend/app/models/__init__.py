@@ -22,6 +22,22 @@ from app.models.password_reset import (
     ForgotPasswordResponse,
     ResetPasswordResponse,
 )
+from app.models.self_inspection import (
+    SelfInspectionReport,
+    SelfInspectionData,
+    SelfInspectionReportCreate,
+    SelfInspectionReportUpdate,
+    SelfInspectionReportResponse,
+    SelfInspectionReportListResponse,
+    SelfInspectionDataCreate,
+    SelfInspectionDataResponse,
+    InspectionStatus,
+    OCRUploadResponse,
+    TrendAnalysisRequest,
+    TrendAnalysisResponse,
+    AIReportRequest,
+    AIReportResponse,
+)
 
 __all__ = [
     "User",
@@ -63,4 +79,18 @@ __all__ = [
     "ResetPasswordRequest",
     "ForgotPasswordResponse",
     "ResetPasswordResponse",
+    "SelfInspectionReport",
+    "SelfInspectionData",
+    "SelfInspectionReportCreate",
+    "SelfInspectionReportUpdate",
+    "SelfInspectionReportResponse",
+    "SelfInspectionReportListResponse",
+    "SelfInspectionDataCreate",
+    "SelfInspectionDataResponse",
+    "InspectionStatus",
+    "OCRUploadResponse",
+    "TrendAnalysisRequest",
+    "TrendAnalysisResponse",
+    "AIReportRequest",
+    "AIReportResponse",
 ]

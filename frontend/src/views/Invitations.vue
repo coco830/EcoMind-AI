@@ -99,21 +99,35 @@ const toggleStatus = async (invitation: InvitationCode) => {
   }
 }
 
-// 删除邀请码
+// 删除邀请码（级联删除企业及关联数据，保留监测数据）
 const handleDelete = async (invitation: InvitationCode) => {
   try {
     await ElMessageBox.confirm(
-      `确定要删除邀请码 "${invitation.name}" 吗？此操作不可恢复。`,
-      '删除确认',
+      `<div style="text-align: left; line-height: 1.8;">
+        <p><strong>确定要删除邀请码 "${invitation.name}" 吗？</strong></p>
+        <p style="color: #f56c6c; margin-top: 8px;">此操作将永久删除以下数据：</p>
+        <ul style="margin: 8px 0; padding-left: 20px; color: #606266;">
+          <li>该企业的所有用户账号（无法再登录）</li>
+          <li>该企业的所有设备信息</li>
+          <li>该企业的所有自检报告</li>
+          <li>企业信息本身</li>
+        </ul>
+        <p style="color: #67c23a; margin-top: 8px;">
+          <strong>保留数据：</strong>历史监测数据将作为数据沉淀保留
+        </p>
+        <p style="color: #f56c6c; font-weight: bold; margin-top: 8px;">删除操作不可恢复！</p>
+      </div>`,
+      '删除企业确认',
       {
-        confirmButtonText: '删除',
+        confirmButtonText: '确认删除',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
+        dangerouslyUseHTMLString: true
       }
     )
 
     await invitationsApi.delete(invitation.id)
-    ElMessage.success('删除成功')
+    ElMessage.success('企业已删除，历史监测数据已保留')
     await loadInvitations()
   } catch (error: any) {
     if (error !== 'cancel') {
@@ -237,20 +251,20 @@ onMounted(() => {
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="150" fixed="right">
+          <el-table-column label="操作" width="170" fixed="right">
             <template #default="{ row }">
               <el-button
-                :type="row.is_active ? 'warning' : 'success'"
+                link
                 size="small"
-                text
+                class="action-btn text-only"
                 @click="toggleStatus(row)"
               >
                 {{ row.is_active ? '禁用' : '启用' }}
               </el-button>
               <el-button
-                type="danger"
+                link
                 size="small"
-                text
+                class="action-btn text-only danger-btn"
                 :icon="Delete"
                 @click="handleDelete(row)"
               />
@@ -426,6 +440,36 @@ onMounted(() => {
 .empty-state p {
   margin-bottom: 16px;
   font-size: 14px;
+}
+
+.action-btn.text-only {
+  padding: 6px 12px;
+  color: #1D1D1F;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+}
+
+.action-btn.text-only:hover {
+  color: #0B1727;
+  border-color: rgba(11, 23, 39, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  background: #fafafa;
+  text-decoration: none;
+}
+
+.danger-btn.text-only {
+  color: #1D1D1F;
+}
+
+.danger-btn.text-only:hover {
+  color: #C41E3A;
+  border-color: rgba(196, 30, 58, 0.2);
+  box-shadow: 0 4px 12px rgba(196, 30, 58, 0.12);
 }
 
 /* 表单提示 */

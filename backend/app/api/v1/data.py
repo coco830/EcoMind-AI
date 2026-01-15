@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Monitoring data API endpoints."""
 
 from datetime import datetime, timedelta
@@ -10,11 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.db.postgres import get_db
-from app.db.tdengine_client import get_tdengine_client
+from app.services.monitoring_service import MonitoringService
 from app.models.monitoring import MonitoringDataResponse, MonitoringDataStats
 from app.models.device import Device
 from app.models.user import User
 from app.api.deps import get_current_active_user
+from app.api.deps import can_cross_tenant_read
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -26,7 +29,7 @@ async def _verify_device_access(
     db: AsyncSession,
 ) -> None:
     """Verify user has access to the device by MN."""
-    if current_user.is_superadmin:
+    if can_cross_tenant_read(current_user):
         return
 
     if not current_user.org_id:
@@ -55,7 +58,7 @@ async def _get_accessible_device_ids(
     db: AsyncSession,
 ) -> list[str] | None:
     """Get list of device MNs accessible to user. Returns None for superadmins (no filter)."""
-    if current_user.is_superadmin:
+    if can_cross_tenant_read(current_user):
         return None
 
     if not current_user.org_id:
@@ -90,24 +93,27 @@ async def query_monitoring_data(
     end_time: datetime | None = None,
     limit: int = Query(1000, ge=1, le=10000),
 ) -> list[MonitoringDataResponse]:
-    """Query monitoring data with filters from TDengine. Filtered by organization."""
+    """Query monitoring data with filters from MySQL. Filtered by organization."""
     try:
         # Verify device access if specific device requested
         if device_id:
             await _verify_device_access(device_id, current_user, db)
 
-        client = get_tdengine_client()
+        # 使用 MySQL MonitoringService
+        service = MonitoringService(db)
 
         # If no specific device, filter by accessible devices
         query_device_id = device_id
-        if not device_id and not current_user.is_superadmin:
+        org_id = None if can_cross_tenant_read(current_user) else str(current_user.org_id) if current_user.org_id else None
+        if not device_id and not can_cross_tenant_read(current_user):
             accessible_ids = await _get_accessible_device_ids(current_user, db)
             if not accessible_ids:
                 return []  # User has no accessible devices
 
-        # Query data from TDengine
-        results = await client.query_monitoring_data(
+        # Query data from MySQL
+        results = await service.query_monitoring_data(
             device_id=query_device_id,
+            org_id=org_id,
             pollutant_code=pollutant_code,
             start_time=start_time,
             end_time=end_time,
@@ -115,7 +121,7 @@ async def query_monitoring_data(
         )
 
         # Filter results by accessible devices if needed
-        if not device_id and not current_user.is_superadmin:
+        if not device_id and not can_cross_tenant_read(current_user):
             accessible_ids = await _get_accessible_device_ids(current_user, db)
             if accessible_ids is not None:
                 results = [r for r in results if r['device_id'] in accessible_ids]
@@ -149,25 +155,27 @@ async def get_latest_data(
     device_id: str | None = None,
     limit: int = Query(100, ge=1, le=1000),
 ) -> list[MonitoringDataResponse]:
-    """Get latest monitoring data from TDengine. Filtered by organization."""
+    """Get latest monitoring data from MySQL. Filtered by organization."""
     try:
         # Verify device access if specific device requested
         if device_id:
             await _verify_device_access(device_id, current_user, db)
 
-        client = get_tdengine_client()
+        # 使用 MySQL MonitoringService
+        service = MonitoringService(db)
+        org_id = None if can_cross_tenant_read(current_user) else str(current_user.org_id) if current_user.org_id else None
 
         # Get device IDs to query
         query_device_ids = [device_id] if device_id else None
-        if not device_id and not current_user.is_superadmin:
+        if not device_id and not can_cross_tenant_read(current_user):
             query_device_ids = await _get_accessible_device_ids(current_user, db)
             if not query_device_ids:
                 return []
 
-        # Get latest values
-        results = await client.get_latest_values(
+        # Get latest values from MySQL
+        results = await service.get_latest_values(
             device_ids=query_device_ids,
-            limit=limit
+            org_id=org_id,
         )
 
         # Convert results to response model
@@ -203,14 +211,15 @@ async def get_realtime_data(
         # Verify device access
         await _verify_device_access(device_id, current_user, db)
 
-        client = get_tdengine_client()
+        # 使用 MySQL MonitoringService
+        service = MonitoringService(db)
 
-        # Calculate time range for real-time data (last 5 minutes)
-        end_time = datetime.now()
-        start_time = end_time - timedelta(minutes=5)
+        # Calculate time range for real-time data (last 5 minutes + timezone buffer)
+        end_time = datetime.now() + timedelta(hours=9)  # UTC+8 buffer
+        start_time = end_time - timedelta(minutes=5 + 9*60)
 
-        # Query recent data from TDengine
-        results = await client.query_monitoring_data(
+        # Query recent data from MySQL
+        results = await service.query_monitoring_data(
             device_id=device_id,
             start_time=start_time,
             end_time=end_time,
@@ -257,10 +266,11 @@ async def get_historical_data(
         # Verify device access
         await _verify_device_access(device_id, current_user, db)
 
-        client = get_tdengine_client()
+        # 使用 MySQL MonitoringService
+        service = MonitoringService(db)
 
-        # Query historical data from TDengine
-        results = await client.query_monitoring_data(
+        # Query historical data from MySQL
+        results = await service.query_monitoring_data(
             device_id=device_id,
             pollutant_code=pollutant_code,
             start_time=start_time,
@@ -313,10 +323,11 @@ async def get_data_stats(
         # Verify device access
         await _verify_device_access(device_id, current_user, db)
 
-        client = get_tdengine_client()
+        # 使用 MySQL MonitoringService
+        service = MonitoringService(db)
 
-        # Use the safe statistics method from TDengine client
-        stats = await client.get_statistics(
+        # Use the statistics method from MySQL service
+        stats = await service.get_statistics(
             device_id=device_id,
             pollutant_code=pollutant_code,
             start_time=start_time,
@@ -351,10 +362,11 @@ async def export_data(
         # Verify device access
         await _verify_device_access(device_id, current_user, db)
 
-        client = get_tdengine_client()
+        # 使用 MySQL MonitoringService
+        service = MonitoringService(db)
 
-        # Query data from TDengine
-        results = await client.query_monitoring_data(
+        # Query data from MySQL
+        results = await service.query_monitoring_data(
             device_id=device_id,
             pollutant_code=pollutant_code,
             start_time=start_time,

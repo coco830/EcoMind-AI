@@ -1,12 +1,14 @@
+from __future__ import annotations
+
 """Alarm models."""
 
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import Field
 from sqlalchemy import String, DateTime, ForeignKey, Text, func, Integer, Index
-
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.postgres import Base, GUID
@@ -62,15 +64,15 @@ class Alarm(Base):
     alarm_type: Mapped[str] = mapped_column(String(32), nullable=False)
     level: Mapped[str] = mapped_column(String(32), default=AlarmLevel.WARNING.value)
     status: Mapped[str] = mapped_column(String(32), default=AlarmStatus.PENDING.value)
-    pollutant_code: Mapped[str | None] = mapped_column(String(32))
+    pollutant_code: Mapped[Optional[str]] = mapped_column(String(32))
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    value: Mapped[str | None] = mapped_column(String(64))  # Recorded value
-    threshold: Mapped[str | None] = mapped_column(String(64))  # Threshold value
-    acknowledged_by: Mapped[UUID | None] = mapped_column(GUID)
-    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    value: Mapped[Optional[str]] = mapped_column(String(64))  # Recorded value
+    threshold: Mapped[Optional[str]] = mapped_column(String(64))  # Threshold value
+    acknowledged_by: Mapped[Optional[UUID]] = mapped_column(GUID)
+    acknowledged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     sms_sent_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    last_sms_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sms_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -88,10 +90,10 @@ class AlarmCreate(BaseSchema):
     device_id: UUID
     alarm_type: AlarmType
     level: AlarmLevel = AlarmLevel.WARNING
-    pollutant_code: str | None = Field(None, max_length=32)
+    pollutant_code: Optional[str] = Field(None, max_length=32)
     message: str = Field(..., min_length=1)
-    value: str | None = Field(None, max_length=64)
-    threshold: str | None = Field(None, max_length=64)
+    value: Optional[str] = Field(None, max_length=64)
+    threshold: Optional[str] = Field(None, max_length=64)
 
 
 class AlarmResponse(BaseSchema):
@@ -102,15 +104,15 @@ class AlarmResponse(BaseSchema):
     alarm_type: AlarmType
     level: AlarmLevel
     status: AlarmStatus
-    pollutant_code: str | None = None
+    pollutant_code: Optional[str] = None
     message: str
-    value: str | None = None
-    threshold: str | None = None
-    acknowledged_by: UUID | None = None
-    acknowledged_at: datetime | None = None
-    resolved_at: datetime | None = None
+    value: Optional[str] = None
+    threshold: Optional[str] = None
+    acknowledged_by: Optional[UUID] = None
+    acknowledged_at: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None
     sms_sent_count: int = 0
-    last_sms_time: datetime | None = None
+    last_sms_time: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

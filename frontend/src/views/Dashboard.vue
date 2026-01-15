@@ -130,11 +130,6 @@ const showExpandButton = computed(() => {
   return filteredActivePollutants.value.length > defaultVisibleCount
 })
 
-// Remaining count
-const remainingCount = computed(() => {
-  return Math.max(0, filteredActivePollutants.value.length - defaultVisibleCount)
-})
-
 // Real-time monitoring cards data
 const monitoringCards = computed(() => {
   return filteredActivePollutants.value
@@ -385,7 +380,7 @@ const getAppleChartOptions = () => ({
     left: '3%',
     right: '4%',
     bottom: '15%',
-    top: '8%',
+    top: '12%',
     containLabel: true
   },
   tooltip: {
@@ -917,19 +912,26 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <!-- Pollutant cards -->
-      <div v-if="monitoringCards.length > 0" class="pollutant-grid">
+      <!-- Pollutant cards - DEBUG: 使用data属性便于调试 -->
+      <div
+        v-if="monitoringCards.length > 0"
+        class="pollutant-grid"
+        data-component="pollutant-grid"
+      >
         <div
           v-for="card in monitoringCards"
           :key="card.code"
           class="pollutant-card"
           :class="{ 'heavy-metal': card.isHeavyMetal }"
+          :style="{
+            '--card-accent-color': card.color,
+            'border-left': `4px solid ${card.color}`
+          }"
+          :data-code="card.code"
+          data-component="pollutant-card"
         >
-          <div class="pollutant-icon" :style="{ background: `${card.color}15` }">
-            <div class="icon-dot" :style="{ background: card.color }"></div>
-          </div>
-          <div class="pollutant-info">
-            <div class="pollutant-header">
+          <div class="pollutant-info" data-component="pollutant-info">
+            <div class="pollutant-header" data-component="pollutant-header">
               <span class="pollutant-name">{{ card.name }}</span>
               <el-tag
                 :type="card.flag === 'N' ? 'success' : 'warning'"
@@ -939,13 +941,14 @@ onUnmounted(() => {
                 {{ card.flag }}
               </el-tag>
             </div>
-            <div class="pollutant-value">
+            <div class="pollutant-value" data-component="pollutant-value">
               <template v-if="card.value !== undefined">
                 <span class="value" :style="{ color: card.color }">{{ card.value.toFixed(card.precision) }}</span>
                 <span class="unit">{{ card.unit }}</span>
               </template>
               <template v-else>
                 <span class="value no-data">--</span>
+                <span class="unit">{{ card.unit }}</span>
               </template>
             </div>
             <div class="pollutant-code">{{ card.code }}</div>
@@ -955,16 +958,10 @@ onUnmounted(() => {
 
       <!-- Expand button -->
       <div v-if="showExpandButton" class="expand-container">
-        <el-button type="primary" link @click="toggleExpand">
-          <template v-if="isExpanded">
-            <el-icon><ArrowUp /></el-icon>
-            收起
-          </template>
-          <template v-else>
-            <el-icon><ArrowDown /></el-icon>
-            展开更多 ({{ remainingCount }})
-          </template>
-        </el-button>
+        <button class="expand-btn" @click="toggleExpand">
+          <el-icon><ArrowUp v-if="isExpanded" /><ArrowDown v-else /></el-icon>
+          <span>{{ isExpanded ? '收起' : '展开更多' }}</span>
+        </button>
       </div>
 
       <!-- No data hint -->
@@ -1060,7 +1057,7 @@ onUnmounted(() => {
           </div>
         </div>
       </template>
-      <div id="trend-chart" style="height: 400px"></div>
+      <div id="trend-chart" style="height: 280px"></div>
       <div v-if="predictionData && predictionData.predictions.length > 0" class="prediction-info">
         <el-tag type="info" size="small" round>
           预测时间范围: 未来 {{ predictionData.predictions.length * 15 }} 分钟
@@ -1297,121 +1294,205 @@ export default {
   font-weight: 600;
 }
 
-/* Pollutant Cards Grid */
+/* ============================================
+   Pollutant Cards - 污染物卡片样式
+   按照设计图还原 - 2025-12-07
+   ============================================ */
+
+/* 网格布局 - 4列布局（按设计图要求） */
 .pollutant-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-md);
+  display: grid !important;
+  grid-template-columns: repeat(4, 1fr) !important;
+  gap: 16px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100% !important;
 }
 
 @media (max-width: 1400px) {
   .pollutant-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, 1fr) !important;
   }
 }
 
-@media (max-width: 1000px) {
+@media (max-width: 1024px) {
   .pollutant-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, 1fr) !important;
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .pollutant-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
   }
 }
 
+/* 单个污染物卡片 - 严格按照设计图样式 */
 .pollutant-card {
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-lg);
-  padding: var(--space-md);
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-md);
-  transition: all var(--transition-normal);
+  background: #FAFAFA !important;
+  background-color: #FAFAFA !important;
+  border-radius: 12px !important;
+  padding: 20px 20px 16px 24px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  position: relative !important;
+  transition: all 0.25s ease !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+  min-height: 110px !important;
+  max-height: 140px !important;
+  /* 重置上、右、下边框，但保留左侧边框（通过内联样式设置） */
+  border-top: none !important;
+  border-right: none !important;
+  border-bottom: none !important;
+  /* border-left 通过内联样式设置: border-left: 4px solid ${color} */
 }
 
 .pollutant-card:hover {
-  background: #EAEAEF;
-  transform: translateY(-2px);
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08) !important;
+  background: #FFFFFF !important;
 }
 
+/* 重金属卡片 - 轻微的紫色调背景 */
 .pollutant-card.heavy-metal {
-  background: linear-gradient(135deg, rgba(175, 82, 222, 0.08) 0%, var(--color-bg-tertiary) 100%);
+  background: linear-gradient(135deg, #FAF8FF 0%, #FAFAFA 100%) !important;
 }
 
-.pollutant-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+.pollutant-card.heavy-metal:hover {
+  background: linear-gradient(135deg, #FAF8FF 0%, #FFFFFF 100%) !important;
 }
 
-.icon-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
+/* 污染物信息容器 */
+.pollutant-card .pollutant-info {
+  flex: 1 !important;
+  min-width: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-start !important;
 }
 
-.pollutant-info {
-  flex: 1;
-  min-width: 0;
+/* 头部：名称 + 标签 */
+.pollutant-card .pollutant-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: flex-start !important;
+  margin-bottom: 12px !important;
 }
 
-.pollutant-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
+/* 污染物名称 */
+.pollutant-card .pollutant-name {
+  font-size: 15px !important;
+  font-weight: 500 !important;
+  color: #1D1D1F !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  line-height: 1.4 !important;
 }
 
-.pollutant-name {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--color-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* 数值容器 */
+.pollutant-card .pollutant-value {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 6px !important;
+  margin-bottom: 8px !important;
 }
 
-.pollutant-value {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
+/* 数值 - 使用与左边框相同的颜色(通过内联样式) */
+.pollutant-card .pollutant-value .value {
+  font-size: 32px !important;
+  font-weight: 600 !important;
+  line-height: 1.1 !important;
+  letter-spacing: -0.03em !important;
+  /* 颜色通过内联样式 :style="{ color: card.color }" 设置 */
 }
 
-.pollutant-value .value {
-  font-size: 28px;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
+/* 无数据时的数值 - 使用粉紫色调 */
+.pollutant-card .pollutant-value .value.no-data {
+  color: #D8B4D8 !important;
+  font-size: 20px !important;
+  font-weight: 500 !important;
 }
 
-.pollutant-value .value.no-data {
-  color: var(--color-text-tertiary);
+/* 单位 */
+.pollutant-card .pollutant-value .unit {
+  font-size: 14px !important;
+  color: #86868B !important;
+  font-weight: 400 !important;
 }
 
-.pollutant-value .unit {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+/* 污染物代码 */
+.pollutant-card .pollutant-code {
+  font-size: 12px !important;
+  color: #86868B !important;
+  display: block !important;
+  line-height: 1.3 !important;
 }
 
-.pollutant-code {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  margin-top: 4px;
+/* 卡片内的 N/W 状态标签 - 绿色边框圆形标签 */
+.pollutant-card :deep(.el-tag) {
+  height: 24px !important;
+  min-width: 24px !important;
+  padding: 0 8px !important;
+  font-size: 12px !important;
+  line-height: 22px !important;
+  border-radius: 12px !important;
+  font-weight: 500 !important;
+  flex-shrink: 0 !important;
+}
+
+/* N 状态标签 - 绿色边框样式 */
+.pollutant-card :deep(.el-tag--success) {
+  background: transparent !important;
+  color: #34C759 !important;
+  border: 1.5px solid #34C759 !important;
+}
+
+/* W 等警告状态标签 */
+.pollutant-card :deep(.el-tag--warning) {
+  background: transparent !important;
+  color: #FF9500 !important;
+  border: 1.5px solid #FF9500 !important;
 }
 
 /* Expand container */
 .expand-container {
   text-align: center;
   padding-top: var(--space-md);
-  border-top: 1px dashed rgba(0, 0, 0, 0.06);
   margin-top: var(--space-md);
+}
+
+/* 收起/展开更多 按钮样式 */
+.expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 20px;
+  color: #86868B;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.expand-btn:hover {
+  border-color: #c0c0c0;
+  color: #606266;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.expand-btn:active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.expand-btn .el-icon {
+  font-size: 14px;
 }
 
 /* No data hint */
@@ -1426,9 +1507,13 @@ export default {
   margin-top: var(--space-sm);
 }
 
-/* Chart card */
+/* Chart card - 降低高度 */
 .chart-card {
-  min-height: 500px;
+  min-height: 380px;
+}
+
+.chart-card #trend-chart {
+  height: 280px !important;
 }
 
 .prediction-info {
@@ -1438,7 +1523,8 @@ export default {
   justify-content: center;
 }
 
-.no-data {
+/* 图表区域无数据提示 - 使用更具体的选择器避免影响卡片 */
+.chart-card .no-data {
   height: 400px;
   display: flex;
   align-items: center;

@@ -14,10 +14,9 @@ from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings
 from app.core.rate_limiter import limiter
 from app.db.postgres import init_db, close_db
-from app.db.tdengine_client import get_tdengine_client
 from app.api.v1.router import api_router
-from app.gateway.server import get_tcp_server
 from app.services.scheduler import setup_scheduler, start_scheduler, stop_scheduler
+from app.services.default_users import ensure_default_users
 
 settings = get_settings()
 logger = structlog.get_logger()
@@ -37,23 +36,40 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting EcoMind-AI Backend", version=settings.app_version)
 
-    # Initialize PostgreSQL
+    # Initialize PostgreSQL/MySQL
     await init_db()
-    logger.info("PostgreSQL initialized")
+    logger.info("Database initialized (MySQL)")
 
-    # Initialize TDengine
-    tdengine = get_tdengine_client()
-    await tdengine.connect()
-    await tdengine.init_database()
-    logger.info("TDengine initialized")
+    # Ensure default platform users exist (idempotent, can be disabled via env)
+    if settings.bootstrap_default_users:
+        try:
+            from app.db.postgres import AsyncSessionLocal
 
-    # Start TCP Gateway Server
-    tcp_server = get_tcp_server(host="0.0.0.0", port=9880)
-    # Create task but don't block (server will run in background)
-    gateway_task = asyncio.create_task(tcp_server.start())
-    app.state.gateway_task = gateway_task  # Store reference
-    app.state.tcp_server = tcp_server
-    logger.info("TCP Gateway Server started on port 9880")
+            async with AsyncSessionLocal() as db:
+                result = await ensure_default_users(
+                    db,
+                    reset_passwords=settings.bootstrap_default_users_reset_passwords,
+                )
+                await db.commit()
+            logger.info("Default users ensured", **result)
+        except Exception as e:
+            # Never block service startup due to bootstrap failures
+            logger.warning("Default user bootstrap failed", error=str(e))
+
+    # Sync device health once at startup (offline alarms, etc.)
+    try:
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.device_health import sync_device_health
+
+        async with AsyncSessionLocal() as db:
+            result = await sync_device_health(db)
+            await db.commit()
+        logger.info("Device health synced on startup", **result)
+    except Exception as e:
+        logger.warning("Device health startup sync failed", error=str(e))
+
+    # Note: TDengine removed - using MySQL for all data storage
+    # Note: TCP Gateway removed - using HTTP Gateway via tcp_proxy_server.py
 
     # Start scheduler for daily tasks
     setup_scheduler(app)
@@ -68,20 +84,7 @@ async def lifespan(app: FastAPI):
     # Stop scheduler
     stop_scheduler()
 
-    # Stop TCP Gateway Server
-    if hasattr(app.state, 'tcp_server'):
-        await app.state.tcp_server.stop()
-    if hasattr(app.state, 'gateway_task'):
-        app.state.gateway_task.cancel()
-        try:
-            await app.state.gateway_task
-        except asyncio.CancelledError:
-            pass
-
-    # Close TDengine
-    await tdengine.close()
-
-    # Close PostgreSQL
+    # Close PostgreSQL/MySQL
     await close_db()
 
     logger.info("Shutdown complete")
@@ -104,7 +107,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,  # Configured from environment
-    allow_credentials=True,
+    # If allow_origins is ["*"], CORS spec forbids allow_credentials=true
+    allow_credentials=("*" not in settings.cors_origins),
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     max_age=3600,  # Cache preflight requests for 1 hour
@@ -151,10 +155,11 @@ async def root() -> dict:
 
 
 @app.post("/init-superadmin")
-async def init_superadmin(secret: str) -> dict:
-    """Initialize superadmin account (one-time setup).
+async def init_superadmin(secret: str, reset_passwords: bool = False) -> dict:
+    """Initialize default platform users (one-time setup).
 
-    Protected by a secret key to prevent unauthorized access.
+    Historical route name kept for compatibility.
+    Protected by INIT_SECRET environment variable.
     """
     import os
     # Security check - must provide correct secret from environment
@@ -162,66 +167,10 @@ async def init_superadmin(secret: str) -> dict:
     if not expected_secret or secret != expected_secret:
         return {"success": False, "message": "Invalid secret"}
 
-    from sqlalchemy import select
     from app.db.postgres import AsyncSessionLocal
-    from app.models.user import User
-    from app.models.organization import Organization
-    from app.core.security import get_password_hash
-
-    # Get superadmin credentials from environment variables
-    SUPERADMIN_USERNAME = os.getenv("SUPERADMIN_USERNAME", "admin")
-    SUPERADMIN_EMAIL = os.getenv("SUPERADMIN_EMAIL", "admin@example.com")
-    SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "")
-
-    if not SUPERADMIN_PASSWORD:
-        return {"success": False, "message": "SUPERADMIN_PASSWORD environment variable is required"}
 
     async with AsyncSessionLocal() as db:
-        # Check if superadmin already exists
-        result = await db.execute(
-            select(User).where(User.username == SUPERADMIN_USERNAME)
-        )
-        existing_user = result.scalar_one_or_none()
-
-        if existing_user:
-            # Update existing user to be superadmin with correct password
-            existing_user.hashed_password = get_password_hash(SUPERADMIN_PASSWORD)
-            existing_user.email = SUPERADMIN_EMAIL
-            existing_user.is_superadmin = True
-            existing_user.is_active = True
-            await db.commit()
-            return {"success": True, "message": "Superadmin updated", "username": SUPERADMIN_USERNAME}
-
-        # Create platform organization for superadmin
-        result = await db.execute(
-            select(Organization).where(Organization.code == "PLATFORM_ADMIN")
-        )
-        platform_org = result.scalar_one_or_none()
-
-        if not platform_org:
-            platform_org = Organization(
-                name="平台管理",
-                code="PLATFORM_ADMIN",
-                address="",
-                contact_name="Platform Admin",
-                contact_phone="",
-            )
-            db.add(platform_org)
-            await db.flush()
-            await db.refresh(platform_org)
-
-        # Create superadmin user
-        superadmin = User(
-            username=SUPERADMIN_USERNAME,
-            email=SUPERADMIN_EMAIL,
-            hashed_password=get_password_hash(SUPERADMIN_PASSWORD),
-            full_name="超级管理员",
-            role="admin",
-            is_active=True,
-            is_superadmin=True,
-            org_id=platform_org.id,
-        )
-        db.add(superadmin)
+        result = await ensure_default_users(db, reset_passwords=reset_passwords)
         await db.commit()
 
-        return {"success": True, "message": "Superadmin created", "username": SUPERADMIN_USERNAME}
+        return {"success": True, "message": "Default users ensured", **result}

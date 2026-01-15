@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir -i https://mirrors.cloud.tencent.com/pypi/simple/
 COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
+COPY scripts/ ./scripts/
 
 # 暴露端口
 EXPOSE 8000

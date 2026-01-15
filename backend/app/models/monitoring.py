@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 """Monitoring data models (for TDengine time-series data)."""
 
 from datetime import datetime
+from typing import Optional
 from uuid import UUID
 
 from pydantic import Field
@@ -45,10 +48,10 @@ class MonitoringDataResponse(BaseSchema):
 class MonitoringDataQuery(BaseSchema):
     """Schema for querying monitoring data."""
 
-    device_id: str | None = None
-    pollutant_code: str | None = None
-    start_time: datetime | None = None
-    end_time: datetime | None = None
+    device_id: Optional[str] = None
+    pollutant_code: Optional[str] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
     limit: int = Field(default=1000, ge=1, le=10000)
 
 

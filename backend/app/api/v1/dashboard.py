@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Dashboard API endpoints - public endpoints for dashboard display."""
 
 from datetime import datetime, timedelta
@@ -5,17 +7,19 @@ import random
 
 from fastapi import APIRouter, Query, HTTPException, Depends
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.db.postgres import get_db
-from app.db.tdengine_client import get_tdengine_client
+from app.services.monitoring_service import MonitoringService
+from app.models.monitoring_mysql import MonitoringDataMySQL
 from app.models.monitoring import MonitoringDataResponse
 from app.models.device import Device, DeviceStatus
 from app.models.alarm import Alarm, AlarmStatus
 from app.models.user import User
 from app.api.deps import get_current_active_user
+from app.api.deps import can_cross_tenant_read
 from typing import Annotated
 
 router = APIRouter()
@@ -79,8 +83,15 @@ async def get_dashboard_stats(
     Returns aggregated stats filtered by user's org_id for multi-tenant isolation.
     """
     try:
-        # Superadmin can see all data, regular users only see their org's data
-        org_id = None if current_user.is_superadmin else current_user.org_id
+        # Superadmin/platform staff can see all data, tenant users only see their org's data
+        org_id = None if can_cross_tenant_read(current_user) else current_user.org_id
+
+        logger.info(
+            "Dashboard stats query",
+            user_id=str(current_user.id),
+            is_superadmin=current_user.is_superadmin,
+            org_id=str(org_id) if org_id else "None (cross-tenant)",
+        )
 
         # Build base query with org filter
         device_base_query = select(func.count(Device.id))
@@ -91,17 +102,23 @@ async def get_dashboard_stats(
         device_count_result = await db.execute(device_base_query)
         device_count = device_count_result.scalar() or 0
 
-        online_query = select(func.count(Device.id)).where(Device.status == DeviceStatus.ONLINE)
+        logger.info("Device count query result", device_count=device_count)
+
+        # Use .value for enum comparison to ensure string matching
+        online_query = select(func.count(Device.id)).where(Device.status == DeviceStatus.ONLINE.value)
         if org_id:
             online_query = online_query.where(Device.org_id == org_id)
         online_count_result = await db.execute(online_query)
         online_count = online_count_result.scalar() or 0
 
+        logger.info("Online count query result", online_count=online_count)
+
         offline_count = device_count - online_count
 
         # Query alarm counts - devices with issues in user's org
+        # Note: DeviceStatus doesn't have WARNING, use ALARM instead
         alarm_query = select(func.count(Device.id)).where(
-            Device.status.in_([DeviceStatus.OFFLINE, DeviceStatus.WARNING])
+            Device.status.in_([DeviceStatus.OFFLINE.value, DeviceStatus.ALARM.value])
         )
         if org_id:
             alarm_query = alarm_query.where(Device.org_id == org_id)
@@ -132,38 +149,30 @@ async def get_dashboard_stats(
             )
             pending_alarms = pending_alarms_result.scalar() or 0
 
-        # Get data count from TDengine (last 24 hours) - filtered by org's devices
+        # Get data count from MySQL (last 24 hours) - filtered by org's devices
         data_count = 0
         try:
-            client = get_tdengine_client()
-            end_time = datetime.now()
-            start_time = end_time - timedelta(hours=24)
+            # Device sends local time (China UTC+8), server may run in UTC
+            # Add 9 hour buffer to account for timezone difference
+            end_time = datetime.now() + timedelta(hours=9)  # Future buffer for UTC+8
+            start_time = end_time - timedelta(hours=33)  # 24h + 9h buffer
 
-            # Superadmin sees all data, regular users only see their org's devices
-            if org_id:
-                device_mns_query = select(Device.mn).where(Device.org_id == org_id)
-                device_mns_result = await db.execute(device_mns_query)
-                device_mns = [row[0] for row in device_mns_result.fetchall()]
-
-                # Query data for each device
-                for mn in device_mns:
-                    results = await client.query_monitoring_data(
-                        device_id=mn,
-                        start_time=start_time,
-                        end_time=end_time,
-                        limit=10000
-                    )
-                    data_count += len(results)
-            else:
-                # Superadmin: query all data
-                results = await client.query_monitoring_data(
-                    start_time=start_time,
-                    end_time=end_time,
-                    limit=10000
+            # Build query for monitoring data count
+            data_count_query = select(func.count(MonitoringDataMySQL.id)).where(
+                and_(
+                    MonitoringDataMySQL.ts >= start_time,
+                    MonitoringDataMySQL.ts <= end_time,
                 )
-                data_count = len(results)
+            )
+
+            # Tenant users only see their org's data
+            if org_id:
+                data_count_query = data_count_query.where(MonitoringDataMySQL.org_id == str(org_id))
+
+            data_count_result = await db.execute(data_count_query)
+            data_count = data_count_result.scalar() or 0
         except Exception as e:
-            logger.warning("Failed to get data count from TDengine", error=str(e))
+            logger.warning("Failed to get data count from MySQL", error=str(e))
 
         return DashboardStats(
             device_count=device_count,
@@ -196,10 +205,10 @@ async def get_trend_data(
     Only returns data for devices belonging to user's organization.
     """
     try:
-        # Superadmin can see all data, regular users only see their org's data
-        org_id = None if current_user.is_superadmin else current_user.org_id
+        # Superadmin/platform staff can see all data, tenant users only see their org's data
+        org_id = None if can_cross_tenant_read(current_user) else current_user.org_id
 
-        # Verify device belongs to user's organization if device_id is specified (skip for superadmin)
+        # Verify device belongs to user's organization if device_id is specified (skip for cross-tenant staff)
         if device_id and org_id:
             device_result = await db.execute(
                 select(Device).where(Device.mn == device_id, Device.org_id == org_id)
@@ -208,33 +217,21 @@ async def get_trend_data(
                 # Device not found or doesn't belong to user's org
                 return []
 
-        # If no device_id specified, get all device MNs for user's org (skip for superadmin)
-        allowed_device_ids = None
-        if org_id and not device_id:
-            device_mns_query = select(Device.mn).where(Device.org_id == org_id)
-            device_mns_result = await db.execute(device_mns_query)
-            allowed_device_ids = [row[0] for row in device_mns_result.fetchall()]
-            if not allowed_device_ids:
-                return []
+        # Device sends local time (China UTC+8), server may run in UTC
+        # Add 9 hour buffer to account for timezone difference
+        end_time = datetime.now() + timedelta(hours=9)  # Future buffer for UTC+8
+        start_time = end_time - timedelta(hours=hours + 9)  # Extra buffer for timezone
 
-        client = get_tdengine_client()
-
-        # Calculate time range
-        end_time = datetime.now()
-        start_time = end_time - timedelta(hours=hours)
-
-        # Query data from TDengine
-        results = await client.query_monitoring_data(
+        # Use MonitoringService to query data from MySQL
+        service = MonitoringService(db)
+        results = await service.query_monitoring_data(
             device_id=device_id,
+            org_id=str(org_id) if org_id else None,
             pollutant_code=pollutant_code,
             start_time=start_time,
             end_time=end_time,
-            limit=limit
+            limit=limit,
         )
-
-        # Filter results by allowed devices if needed
-        if allowed_device_ids:
-            results = [r for r in results if r['device_id'] in allowed_device_ids]
 
         # Convert results to response model
         responses = []
@@ -271,10 +268,10 @@ async def get_device_pollutants(
     Only returns data for devices belonging to user's organization.
     """
     try:
-        # Superadmin can see all data, regular users only see their org's data
-        org_id = None if current_user.is_superadmin else current_user.org_id
+        # Superadmin/platform staff can see all data, tenant users only see their org's data
+        org_id = None if can_cross_tenant_read(current_user) else current_user.org_id
 
-        # Verify device belongs to user's organization (skip for superadmin)
+        # Verify device belongs to user's organization (skip for cross-tenant staff)
         if org_id:
             device_result = await db.execute(
                 select(Device).where(Device.mn == device_id, Device.org_id == org_id)
@@ -283,39 +280,30 @@ async def get_device_pollutants(
                 # Device not found or doesn't belong to user's org
                 return []
 
-        client = get_tdengine_client()
+        # Device sends local time (China UTC+8), server may run in UTC
+        # Add 9 hour buffer to account for timezone difference
+        end_time = datetime.now() + timedelta(hours=9)  # Future buffer for UTC+8
+        start_time = end_time - timedelta(hours=hours + 9)  # Extra buffer for timezone
 
-        # Calculate time range
-        end_time = datetime.now()
-        start_time = end_time - timedelta(hours=hours)
+        # Use MonitoringService to get latest values for each pollutant
+        service = MonitoringService(db)
 
-        # Query all data for this device (no pollutant_code filter)
-        results = await client.query_monitoring_data(
-            device_id=device_id,
-            pollutant_code=None,  # Get all pollutants
-            start_time=start_time,
-            end_time=end_time,
-            limit=5000,  # Higher limit to get all pollutants
+        # Get latest values for this device (all pollutants)
+        results = await service.get_latest_values(
+            device_ids=[device_id],
+            org_id=str(org_id) if org_id else None,
         )
-
-        # Group by pollutant and get latest value for each
-        latest_by_pollutant: dict[str, dict] = {}
-        for row in results:
-            code = row['pollutant_code']
-            ts = row['ts']
-            if code not in latest_by_pollutant or ts > latest_by_pollutant[code]['ts']:
-                latest_by_pollutant[code] = row
 
         # Convert to response format
         responses = []
-        for row in latest_by_pollutant.values():
+        for row in results:
             responses.append(MonitoringDataResponse(
                 ts=row['ts'].isoformat() if isinstance(row['ts'], datetime) else str(row['ts']),
                 device_id=row['device_id'],
                 pollutant_code=row['pollutant_code'],
                 value=row['value'],
                 flag=row['flag'],
-                status=row['status']
+                status=0,  # Default status
             ))
 
         logger.info("Retrieved device pollutants", device_id=device_id, pollutant_count=len(responses), org_id=str(org_id))
@@ -339,8 +327,8 @@ async def get_latest_monitoring_data(
     Returns the most recent data points for devices in user's organization.
     """
     try:
-        # Superadmin can see all data, regular users only see their org's data
-        org_id = None if current_user.is_superadmin else current_user.org_id
+        # Superadmin/platform staff can see all data, tenant users only see their org's data
+        org_id = None if can_cross_tenant_read(current_user) else current_user.org_id
 
         # Get device MNs for user's org (superadmin sees all)
         allowed_device_ids = None
@@ -351,17 +339,13 @@ async def get_latest_monitoring_data(
             if not allowed_device_ids:
                 return []
 
-        client = get_tdengine_client()
-
-        # Get latest values
-        results = await client.get_latest_values(
-            limit=limit,
+        # Use MonitoringService to get latest values from MySQL
+        service = MonitoringService(db)
+        results = await service.get_latest_values(
+            device_ids=allowed_device_ids,
+            org_id=str(org_id) if org_id else None,
             pollutant_code=pollutant_code,
         )
-
-        # Filter by allowed devices (superadmin sees all)
-        if allowed_device_ids:
-            results = [r for r in results if r['device_id'] in allowed_device_ids]
 
         # Convert results to response model
         responses = []
@@ -372,7 +356,7 @@ async def get_latest_monitoring_data(
                 pollutant_code=row['pollutant_code'],
                 value=row['value'],
                 flag=row['flag'],
-                status=row['status']
+                status=0,  # Default status
             ))
 
         logger.info("Retrieved latest data", count=len(responses), org_id=str(org_id))
@@ -396,8 +380,8 @@ async def get_realtime_data(
     Returns the most recent data points for devices in user's organization.
     """
     try:
-        # Superadmin can see all data, regular users only see their org's data
-        org_id = None if current_user.is_superadmin else current_user.org_id
+        # Superadmin/platform staff can see all data, tenant users only see their org's data
+        org_id = None if can_cross_tenant_read(current_user) else current_user.org_id
 
         # Get device MNs for user's org (superadmin sees all)
         allowed_device_ids = None
@@ -408,17 +392,19 @@ async def get_realtime_data(
             if not allowed_device_ids:
                 return []
 
-        client = get_tdengine_client()
+        # Device sends local time (China UTC+8), server may run in UTC
+        # Add 9 hour buffer to account for timezone difference
+        end_time = datetime.now() + timedelta(hours=9)  # Future buffer for UTC+8
+        start_time = end_time - timedelta(minutes=5 + 9*60)  # 5 min + 9h buffer
 
-        # Get data from last 5 minutes
-        end_time = datetime.now()
-        start_time = end_time - timedelta(minutes=5)
-
-        results = await client.query_monitoring_data(
+        # Use MonitoringService to query data from MySQL
+        service = MonitoringService(db)
+        results = await service.query_monitoring_data(
+            org_id=str(org_id) if org_id else None,
+            pollutant_code=pollutant_code,
             start_time=start_time,
             end_time=end_time,
-            pollutant_code=pollutant_code,
-            limit=limit
+            limit=limit,
         )
 
         # Filter by allowed devices (superadmin sees all)
@@ -456,18 +442,19 @@ class DemoDataResponse(BaseModel):
 
 @router.post("/demo/inject")
 async def inject_demo_data(
+    db: Annotated[AsyncSession, Depends(get_db)],
     device_id: str = Query("BEIJING001", description="设备ID"),
     hours: int = Query(24, ge=1, le=72, description="生成多少小时的历史数据"),
     interval_minutes: int = Query(15, ge=5, le=60, description="数据间隔(分钟)"),
     include_anomalies: bool = Query(True, description="是否包含异常数据"),
 ) -> DemoDataResponse:
     """
-    注入演示数据 - 用于测试和演示 (仅在 Mock 模式下有效)
+    注入演示数据 - 用于测试和演示
 
     生成包含常用指标、重金属、异常数据的模拟监测数据。
     """
     try:
-        client = get_tdengine_client()
+        service = MonitoringService(db)
         org_id = "00000000-0000-0000-0000-000000000001"
 
         now = datetime.now()
@@ -479,6 +466,9 @@ async def inject_demo_data(
         trend_start = total_points // 3
         trend_peak = trend_start + total_points // 6
         trend_end = trend_peak + total_points // 6
+
+        # Batch insert for better performance
+        batch_data = []
 
         for i in range(total_points):
             timestamp = now - timedelta(minutes=(total_points - i - 1) * interval_minutes)
@@ -511,16 +501,21 @@ async def inject_demo_data(
                         flag = "B"
                         anomaly_count += 1
 
-                # 插入数据
-                await client.insert_monitoring_data(
-                    device_id=device_id,
-                    org_id=org_id,
-                    pollutant_code=code,
-                    value=round(value, 6),
-                    flag=flag,
-                    timestamp=timestamp,
-                )
+                # Add to batch
+                batch_data.append({
+                    "device_id": device_id,
+                    "org_id": org_id,
+                    "pollutant_code": code,
+                    "value": round(value, 6),
+                    "flag": flag,
+                    "ts": timestamp,
+                    "data_type": "realtime",
+                })
                 data_count += 1
+
+        # Insert in batches
+        if batch_data:
+            await service.insert_batch_monitoring_data(batch_data)
 
         logger.info(
             "Demo data injected",

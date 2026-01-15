@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Report generation service for daily and monthly reports."""
 
 import io
@@ -17,8 +19,9 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.tdengine_client import get_tdengine_client
+from app.services.monitoring_service import MonitoringService
 from app.protocols.enums import PARAMETER_DESCRIPTIONS, PARAMETER_UNITS
 
 logger = structlog.get_logger()
@@ -37,8 +40,15 @@ except Exception as e:
 class ReportService:
     """Service for generating environmental monitoring reports."""
 
-    def __init__(self):
-        self.tdengine = get_tdengine_client()
+    def __init__(self, db_session: AsyncSession):
+        """
+        初始化报告服务。
+
+        Args:
+            db_session: 数据库会话，用于查询监测数据
+        """
+        self.db_session = db_session
+        self.monitoring_service = MonitoringService(db_session)
 
     async def get_report_statistics(
         self,
@@ -63,8 +73,8 @@ class ReportService:
         Returns:
             Dict containing statistics for each pollutant
         """
-        # Query all data for the period
-        data = await self.tdengine.query_monitoring_data(
+        # Query all data for the period (使用 MySQL MonitoringService)
+        data = await self.monitoring_service.query_monitoring_data(
             device_id=device_id,
             start_time=start_time,
             end_time=end_time,
@@ -354,8 +364,8 @@ class ReportService:
         # Add detail data sheet
         ws_detail = wb.create_sheet(title="详细数据")
 
-        # Get raw data
-        raw_data = await self.tdengine.query_monitoring_data(
+        # Get raw data (使用 MySQL MonitoringService)
+        raw_data = await self.monitoring_service.query_monitoring_data(
             device_id=device_id,
             start_time=start_time,
             end_time=end_time,
@@ -583,13 +593,14 @@ class ReportService:
         return buffer.getvalue()
 
 
-# Singleton instance
-_report_service: ReportService | None = None
+def get_report_service(db_session: AsyncSession) -> ReportService:
+    """
+    获取 ReportService 实例。
 
+    Args:
+        db_session: 数据库会话
 
-def get_report_service() -> ReportService:
-    """Get the singleton ReportService instance."""
-    global _report_service
-    if _report_service is None:
-        _report_service = ReportService()
-    return _report_service
+    Returns:
+        ReportService 实例
+    """
+    return ReportService(db_session)

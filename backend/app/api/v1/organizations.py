@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 """Organization management API endpoints (Superadmin only)."""
 
 from typing import Annotated
+import hashlib
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,10 +12,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_db
-from app.models.organization import Organization, OrganizationCreate, OrganizationResponse
+from app.models.organization import Organization, OrganizationCreate, OrganizationResponse, OrganizationStatus
 from app.models.user import User
 from app.models.device import Device
-from app.api.deps import require_superadmin
+from app.api.deps import require_superadmin, require_platform_staff_read
 
 router = APIRouter()
 
@@ -33,26 +36,62 @@ class OrganizationWithStats(OrganizationResponse):
     device_count: int = 0
 
 
+def _mask_org_name(org: Organization) -> str:
+    # Stable pseudonym for sales demos
+    seed = (str(org.id) + "|" + (org.code or "")).encode("utf-8")
+    suffix = hashlib.sha256(seed).hexdigest()[:6].upper()
+    return f"企业-{suffix}"
+
+
+def _to_org_response(org: Organization, *, mask: bool) -> OrganizationResponse:
+    if not mask:
+        return OrganizationResponse.model_validate(org)
+    # Mask identity fields for sales role
+    return OrganizationResponse(
+        id=org.id,
+        name=_mask_org_name(org),
+        code=f"ORG-{str(org.id)[-6:]}",
+        address=None,
+        contact_name=None,
+        contact_phone=None,
+        status=org.status,
+        created_at=org.created_at,
+        updated_at=org.updated_at,
+    )
+
+
 @router.get("", response_model=list[OrganizationResponse])
 async def list_organizations(
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_superadmin)],
+    current_user: Annotated[User, Depends(require_platform_staff_read)],
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    include_inactive: bool = Query(False, description="Include inactive organizations"),
 ) -> list[OrganizationResponse]:
-    """List all organizations (superadmin only)."""
-    query = select(Organization).offset(skip).limit(limit)
+    """List all organizations (superadmin only).
+
+    By default only returns active organizations.
+    Set include_inactive=true to include all organizations.
+    """
+    query = select(Organization)
+
+    # By default, only return active organizations
+    if not include_inactive:
+        query = query.where(Organization.status == OrganizationStatus.ACTIVE.value)
+
+    query = query.offset(skip).limit(limit)
     result = await db.execute(query)
     organizations = result.scalars().all()
 
-    return [OrganizationResponse.model_validate(org) for org in organizations]
+    mask = (not current_user.is_superadmin) and (current_user.role == "viewer")
+    return [_to_org_response(org, mask=mask) for org in organizations]
 
 
 @router.get("/{org_id}", response_model=OrganizationWithStats)
 async def get_organization(
     org_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_superadmin)],
+    current_user: Annotated[User, Depends(require_platform_staff_read)],
 ) -> OrganizationWithStats:
     """Get organization by ID with statistics (superadmin only)."""
     result = await db.execute(select(Organization).where(Organization.id == org_id))
@@ -76,6 +115,23 @@ async def get_organization(
     )
     device_count = device_count_result.scalar() or 0
 
+    mask = (not current_user.is_superadmin) and (current_user.role == "viewer")
+    if mask:
+        masked = _to_org_response(org, mask=True)
+        return OrganizationWithStats(
+            id=masked.id,
+            name=masked.name,
+            code=masked.code,
+            address=masked.address,
+            contact_name=masked.contact_name,
+            contact_phone=masked.contact_phone,
+            status=masked.status,
+            created_at=masked.created_at,
+            updated_at=masked.updated_at,
+            user_count=user_count,
+            device_count=device_count,
+        )
+
     return OrganizationWithStats(
         id=org.id,
         name=org.name,
@@ -83,6 +139,7 @@ async def get_organization(
         address=org.address,
         contact_name=org.contact_name,
         contact_phone=org.contact_phone,
+        status=org.status,
         created_at=org.created_at,
         updated_at=org.updated_at,
         user_count=user_count,
@@ -154,12 +211,12 @@ async def update_organization(
     return OrganizationResponse.model_validate(org)
 
 
-@router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_organization(
     org_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superadmin)],
-) -> None:
+):
     """Delete an organization (superadmin only). Fails if org has users or devices."""
     result = await db.execute(select(Organization).where(Organization.id == org_id))
     org = result.scalar_one_or_none()

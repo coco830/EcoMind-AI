@@ -38,35 +38,22 @@ const validDevices = computed(() => {
   )
 })
 
-// Get marker color based on device status
+// Get marker color based on device status（容错大小写/别名）
 const getMarkerColor = (status: string): string => {
-  switch (status) {
+  const s = (status || '').toLowerCase()
+  switch (s) {
     case 'online':
+    case 'normal':
       return '#67c23a' // Green
     case 'alarm':
+    case 'alert':
+    case 'warning':
       return '#f56c6c' // Red
-    case 'offline':
-      return '#909399' // Gray
     case 'maintenance':
       return '#e6a23c' // Orange
+    case 'offline':
     default:
       return '#909399'
-  }
-}
-
-// Get status text
-const getStatusText = (status: string): string => {
-  switch (status) {
-    case 'online':
-      return '在线'
-    case 'alarm':
-      return '告警'
-    case 'offline':
-      return '离线'
-    case 'maintenance':
-      return '维护中'
-    default:
-      return '未知'
   }
 }
 
@@ -106,46 +93,31 @@ const createMarkerContent = (color: string): string => {
 // Create info window content
 const createInfoWindowContent = (device: Device): string => {
   const statusColor = getMarkerColor(device.status)
-  const statusText = getStatusText(device.status)
   const typeText = getDeviceTypeText(device.device_type)
 
-  return `
-    <div style="min-width: 220px; padding: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee;">
-        <span style="font-weight: 600; font-size: 15px; color: #333;">${device.name}</span>
-        <span style="
-          background: ${statusColor};
-          color: #fff;
-          padding: 2px 8px;
-          border-radius: 10px;
-          font-size: 11px;
-          font-weight: 500;
-        ">${statusText}</span>
-      </div>
-      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
-        <div style="display: flex;">
-          <span style="color: #909399; width: 60px; flex-shrink: 0;">MN号:</span>
-          <span style="color: #333; word-break: break-all;">${device.mn}</span>
-        </div>
-        <div style="display: flex;">
-          <span style="color: #909399; width: 60px; flex-shrink: 0;">类型:</span>
-          <span style="color: #333;">${typeText}</span>
-        </div>
-        ${device.address ? `
-        <div style="display: flex;">
-          <span style="color: #909399; width: 60px; flex-shrink: 0;">地址:</span>
-          <span style="color: #333; word-break: break-all;">${device.address}</span>
-        </div>
-        ` : ''}
-        ${device.last_heartbeat ? `
-        <div style="display: flex;">
-          <span style="color: #909399; width: 60px; flex-shrink: 0;">最后活动:</span>
-          <span style="color: #333;">${new Date(device.last_heartbeat).toLocaleString('zh-CN')}</span>
-        </div>
-        ` : ''}
-      </div>
-    </div>
-  `
+  // 使用单行内联样式避免解析问题
+  const containerStyle = 'min-width:220px;padding:12px 14px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:rgba(248,248,250,0.95);border:1px solid rgba(0,0,0,0.08);box-shadow:0 4px 16px rgba(0,0,0,0.15);'
+  const headerStyle = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(0,0,0,0.06);'
+  const titleStyle = 'font-weight:600;font-size:14px;color:#1D1D1F;'
+  const dotStyle = `width:10px;height:10px;border-radius:50%;background:${statusColor};flex-shrink:0;`
+  const infoStyle = 'display:flex;flex-direction:column;gap:6px;font-size:12px;'
+  const rowStyle = 'display:flex;'
+  const labelStyle = 'color:#86868B;width:60px;flex-shrink:0;'
+  const valueStyle = 'color:#1D1D1F;word-break:break-all;'
+
+  let html = `<div style="${containerStyle}">`
+  html += `<div style="${headerStyle}"><span style="${titleStyle}">${device.name}</span><span style="${dotStyle}"></span></div>`
+  html += `<div style="${infoStyle}">`
+  html += `<div style="${rowStyle}"><span style="${labelStyle}">MN号:</span><span style="${valueStyle}">${device.mn}</span></div>`
+  html += `<div style="${rowStyle}"><span style="${labelStyle}">类型:</span><span style="${valueStyle}">${typeText}</span></div>`
+  if (device.address) {
+    html += `<div style="${rowStyle}"><span style="${labelStyle}">地址:</span><span style="${valueStyle}">${device.address}</span></div>`
+  }
+  if (device.last_heartbeat) {
+    html += `<div style="${rowStyle}"><span style="${labelStyle}">最后活动:</span><span style="${valueStyle}">${new Date(device.last_heartbeat).toLocaleString('zh-CN')}</span></div>`
+  }
+  html += '</div></div>'
+  return html
 }
 
 // Initialize AMap
@@ -183,7 +155,8 @@ const initMap = async () => {
       zoom: 10,
       center: defaultCenter,
       viewMode: '2D',
-      mapStyle: 'amap://styles/whitesmoke'
+      // 使用默认彩色底图，避免灰阶
+      mapStyle: 'amap://styles/normal'
     })
 
     // Add controls
@@ -397,12 +370,14 @@ export default {
 
 .map-legend {
   position: absolute;
-  bottom: 10px;
-  right: 10px;
-  background: rgba(255, 255, 255, 0.95);
-  padding: 8px 12px;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  bottom: 12px;
+  right: 12px;
+  background: rgba(248, 248, 250, 0.92);
+  backdrop-filter: blur(8px);
+  padding: 10px 14px;
+  border-radius: 0;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
   z-index: 1000;
   display: flex;
   flex-direction: column;
@@ -425,11 +400,21 @@ export default {
 
 /* AMap info window custom styles */
 :deep(.amap-info-content) {
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  border: none;
-  padding: 0;
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+:deep(.amap-info-contentContainer) {
+  background: transparent !important;
+}
+
+:deep(.amap-info-outer) {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 :deep(.amap-info-sharp) {

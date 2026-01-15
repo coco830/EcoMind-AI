@@ -174,9 +174,9 @@ async def register(
             detail="邮箱已被注册",
         )
 
-    # Determine user role: first user with this invitation code becomes admin
-    is_first_user = invitation.used_count == 0
-    user_role = 'admin' if is_first_user else 'operator'
+    # All publicly registered users start as viewers
+    # Role upgrades must be done by superadmin
+    user_role = 'viewer'
 
     # Create user and add to the organization bound to the invitation code
     user = User(

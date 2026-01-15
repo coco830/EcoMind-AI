@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 讯飞星火大模型 WebSocket 客户端
 Spark Pro-128K 原生 WebSocket 接入实现

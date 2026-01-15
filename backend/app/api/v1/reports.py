@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Report generation API endpoints."""
 
 from datetime import datetime, date
@@ -17,7 +19,8 @@ import json
 from app.db.postgres import get_db
 from app.models.device import Device, ThresholdConfig
 from app.models.user import User
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, can_cross_tenant_read
+from app.core.masking import is_demo_viewer, mask_device_name
 from app.services.report_service import get_report_service
 
 router = APIRouter()
@@ -86,8 +89,8 @@ async def _get_device_with_access(
     # Build query
     query = select(Device).where(Device.id == device_id)
 
-    # Filter by organization if not superadmin
-    if not current_user.is_superadmin:
+    # Filter by organization if not cross-tenant staff
+    if not can_cross_tenant_read(current_user):
         if not current_user.org_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -143,13 +146,19 @@ async def preview_report(
     try:
         # Get device with access check
         device = await _get_device_with_access(request.device_id, current_user, db)
+        device_name = device.name
+        if is_demo_viewer(current_user) and can_cross_tenant_read(current_user):
+            device_name = mask_device_name(device_id=str(device.id), mn=device.mn)
+        device_name = device.name
+        if is_demo_viewer(current_user) and can_cross_tenant_read(current_user):
+            device_name = mask_device_name(device_id=str(device.id), mn=device.mn)
 
         # Parse thresholds and pollutant codes
         thresholds = _parse_thresholds(device)
         pollutant_codes = _parse_pollutant_codes(device)
 
-        # Get report service
-        report_service = get_report_service()
+        # Get report service (传入 db_session 以使用 MySQL)
+        report_service = get_report_service(db)
 
         # Generate statistics based on report type
         if request.report_type == "daily":
@@ -158,7 +167,7 @@ async def preview_report(
 
             stats = await report_service.generate_daily_report(
                 device_id=device.mn,
-                device_name=device.name,
+                device_name=device_name,
                 report_date=request.report_date,
                 pollutant_codes=pollutant_codes,
                 thresholds=thresholds,
@@ -171,7 +180,7 @@ async def preview_report(
 
             stats = await report_service.generate_monthly_report(
                 device_id=device.mn,
-                device_name=device.name,
+                device_name=device_name,
                 year=request.year,
                 month=request.month,
                 pollutant_codes=pollutant_codes,
@@ -240,14 +249,14 @@ async def download_report(
                 end_time = datetime(request.year, request.month + 1, 1)
             date_str = f"{request.year}{request.month:02d}"
 
-        # Get report service
-        report_service = get_report_service()
+        # Get report service (传入 db_session 以使用 MySQL)
+        report_service = get_report_service(db)
 
         # Generate report file
         if format == "excel":
             file_content = await report_service.generate_excel_report(
                 device_id=device.mn,
-                device_name=device.name,
+                device_name=device_name,
                 start_time=start_time,
                 end_time=end_time,
                 report_type=request.report_type,
@@ -259,7 +268,7 @@ async def download_report(
         else:  # pdf
             file_content = await report_service.generate_pdf_report(
                 device_id=device.mn,
-                device_name=device.name,
+                device_name=device_name,
                 start_time=start_time,
                 end_time=end_time,
                 report_type=request.report_type,
@@ -271,7 +280,7 @@ async def download_report(
 
         # Generate filename
         report_type_cn = "日报" if request.report_type == "daily" else "月报"
-        filename = f"{device.name}_{report_type_cn}_{date_str}.{extension}"
+        filename = f"{device_name}_{report_type_cn}_{date_str}.{extension}"
         # URL encode the filename for Content-Disposition header
         encoded_filename = quote(filename, safe='')
 
@@ -316,8 +325,8 @@ async def list_devices_for_reports(
         # Build query
         query = select(Device)
 
-        # Filter by organization if not superadmin
-        if not current_user.is_superadmin:
+        # Filter by organization if not cross-tenant staff
+        if not can_cross_tenant_read(current_user):
             if not current_user.org_id:
                 return []
             query = query.where(Device.org_id == current_user.org_id)
@@ -325,12 +334,13 @@ async def list_devices_for_reports(
         result = await db.execute(query)
         devices = result.scalars().all()
 
+        mask = is_demo_viewer(current_user) and can_cross_tenant_read(current_user)
         # Return simplified device list
         return [
             {
                 "id": str(device.id),
                 "mn": device.mn,
-                "name": device.name,
+                "name": (mask_device_name(device_id=str(device.id), mn=device.mn) if mask else device.name),
                 "device_type": device.device_type,
                 "pollutant_codes": device.pollutant_codes.split(",") if device.pollutant_codes else [],
             }

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 数据特征提取服务
 
@@ -19,7 +21,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.tdengine_client import get_tdengine_client
+from app.services.monitoring_service import MonitoringService
 from app.models.device import Device, ThresholdConfig
 
 logger = structlog.get_logger(__name__)
@@ -37,10 +39,11 @@ class DataAnalysisService:
         初始化数据分析服务。
 
         Args:
-            db_session: PostgreSQL 数据库会话，用于查询设备阈值配置
+            db_session: 数据库会话，用于查询设备阈值配置和监测数据
         """
-        self.tdengine = get_tdengine_client()
         self.db_session = db_session
+        # 使用 MySQL MonitoringService 替代 TDengine
+        self.monitoring_service = MonitoringService(db_session) if db_session else None
 
     async def get_device_thresholds(self, device_id: str) -> ThresholdConfig | None:
         """
@@ -132,8 +135,18 @@ class DataAnalysisService:
             pollutant_code=pollutant_code,
         )
 
-        # 查询原始数据
-        raw_data = await self.tdengine.query_monitoring_data(
+        # 查询原始数据 (使用 MySQL MonitoringService)
+        if not self.monitoring_service:
+            logger.error("MonitoringService not initialized - db_session is required")
+            return {
+                "device_id": device_id,
+                "date": target_date.isoformat(),
+                "pollutants": [],
+                "summary": "数据服务未初始化",
+                "data_count": 0,
+            }
+
+        raw_data = await self.monitoring_service.query_monitoring_data(
             device_id=device_id,
             pollutant_code=pollutant_code,
             start_time=start_time,
@@ -154,6 +167,9 @@ class DataAnalysisService:
         # 转换为 DataFrame
         df = pd.DataFrame(raw_data)
         df["ts"] = pd.to_datetime(df["ts"])
+        # MySQL 返回的 Decimal 类型需要转换为 float，否则数学运算会报错
+        if "value" in df.columns:
+            df["value"] = df["value"].astype(float)
 
         # 获取阈值配置
         thresholds = await self.get_device_thresholds(device_id)
@@ -210,9 +226,19 @@ class DataAnalysisService:
         df_copy["ts"] = pd.to_datetime(df_copy["ts"])
         df_copy = df_copy.set_index("ts")
 
-        # 按小时重采样，计算 mean/max/min
-        hourly = df_copy["value"].resample("H").agg(["mean", "max", "min"])
-        hourly = hourly.dropna()
+        # 按小时重采样，计算 mean/max/min/count
+        hourly = df_copy["value"].resample("H").agg(["mean", "max", "min", "count"])
+
+        # 记录哪些小时有原始数据
+        has_data = hourly["count"] > 0
+
+        # 启用插值：对缺失小时进行线性插值填充（最多填充3个连续缺失小时）
+        hourly["mean"] = hourly["mean"].interpolate(method="linear", limit=3)
+        hourly["max"] = hourly["max"].interpolate(method="linear", limit=3)
+        hourly["min"] = hourly["min"].interpolate(method="linear", limit=3)
+
+        # 移除仍然为 NaN 的行（无法插值的边界情况）
+        hourly = hourly.dropna(subset=["mean"])
 
         result = []
         for ts, row in hourly.iterrows():
@@ -221,6 +247,8 @@ class DataAnalysisService:
                 "mean": round(float(row["mean"]), 2),
                 "max": round(float(row["max"]), 2),
                 "min": round(float(row["min"]), 2),
+                "data_points": int(row["count"]) if pd.notna(row["count"]) else 0,
+                "interpolated": not has_data.get(ts, False),  # 标记是否为插值数据
             })
 
         return result

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """AI analysis API endpoints."""
 
 import asyncio
@@ -33,6 +35,7 @@ from app.models.daily_report import DailyReport, ReportStatus
 from app.models.user import User
 from app.services.data_analysis_service import DataAnalysisService
 from app.services.llm.spark_client import SparkClient, SparkClientError
+from app.services.monitoring_service import MonitoringService
 from app.services.scheduler import trigger_daily_reports_manually
 
 router = APIRouter()
@@ -486,6 +489,10 @@ async def _generate_report_stream(
             comprehensive=is_comprehensive,
         )
 
+        # 用于记录实际使用的日期（可能与请求日期不同）
+        actual_date = target_date
+        date_fallback_used = False
+
         # 创建数据库会话用于获取设备行业信息
         async with AsyncSessionLocal() as db_session:
             # 使用 DataAnalysisService 获取统计和行业信息
@@ -495,6 +502,36 @@ async def _generate_report_stream(
                 target_date=target_date,
                 pollutant_code=pollutant_code,  # None = 查询所有污染物
             )
+
+            # 如果指定日期没有数据，尝试查找最近有数据的日期
+            if not stats.get("pollutants"):
+                logger.info(
+                    "No data found for target date, searching for latest data date",
+                    device_id=device_id,
+                    target_date=target_date.isoformat(),
+                )
+                yield f"event: progress\ndata: {json.dumps({'status': 'searching', 'message': f'{target_date} 无数据，正在查找最近有数据的日期...'})}\n\n"
+
+                # 查找最近有数据的日期
+                monitoring_service = MonitoringService(db_session)
+                latest_date = await monitoring_service.get_latest_data_date(device_id)
+
+                if latest_date:
+                    actual_date = latest_date
+                    date_fallback_used = True
+                    logger.info(
+                        "Found latest data date",
+                        device_id=device_id,
+                        latest_date=latest_date.isoformat(),
+                    )
+                    yield f"event: progress\ndata: {json.dumps({'status': 'found_data', 'message': f'找到数据，使用 {latest_date} 的监测数据进行分析'})}\n\n"
+
+                    # 重新获取该日期的数据
+                    stats = await service.analyze_device_daily_stats(
+                        device_id=device_id,
+                        target_date=actual_date,
+                        pollutant_code=pollutant_code,
+                    )
 
             # 获取设备行业信息
             industry_info = await service.get_device_industry_info(device_id)
@@ -509,7 +546,7 @@ async def _generate_report_stream(
             )
 
         if not stats.get("pollutants"):
-            yield f"event: error\ndata: {json.dumps({'error': f'设备 {device_id} 在 {target_date} 无监测数据'})}\n\n"
+            yield f"event: error\ndata: {json.dumps({'error': f'设备 {device_id} 在数据库中无任何监测数据，请确认设备ID是否正确或设备是否已上报数据'})}\n\n"
             return
 
         pollutant_count = len(stats["pollutants"])
@@ -525,7 +562,7 @@ async def _generate_report_stream(
             prompt = build_comprehensive_diagnosis_prompt(
                 device_id=device_id,
                 device_name=device_name,
-                report_date=target_date.isoformat(),
+                report_date=actual_date.isoformat(),
                 pollutants_stats=stats["pollutants"],
                 total_data_points=stats.get("data_count", 0),
                 domain=domain,
@@ -564,7 +601,7 @@ async def _generate_report_stream(
                 device_name=device_name,
                 pollutant_code=p_code,
                 pollutant_name=p_name,
-                report_date=target_date.isoformat(),
+                report_date=actual_date.isoformat(),
                 avg_val=pollutant_stats["avg_val"],
                 max_val=pollutant_stats["max_val"],
                 min_val=pollutant_stats["min_val"],
@@ -589,15 +626,32 @@ async def _generate_report_stream(
             await asyncio.sleep(0.01)
 
         # 步骤6：发送完成事件
-        yield f"event: done\ndata: {json.dumps({'status': 'completed', 'stats': stats, 'mode': 'comprehensive' if is_comprehensive else 'single'})}\n\n"
+        done_data = {
+            'status': 'completed',
+            'stats': stats,
+            'mode': 'comprehensive' if is_comprehensive else 'single',
+            'actual_date': actual_date.isoformat(),
+            'date_fallback_used': date_fallback_used,
+        }
+        yield f"event: done\ndata: {json.dumps(done_data)}\n\n"
 
     except SparkClientError as e:
         logger.error("Spark API error", error=str(e))
         yield f"event: error\ndata: {json.dumps({'error': f'AI 服务错误: {str(e)}'})}\n\n"
 
     except Exception as e:
-        logger.error("Report generation failed", error=str(e))
-        yield f"event: error\ndata: {json.dumps({'error': f'生成报告失败: {str(e)}'})}\n\n"
+        import traceback
+        error_traceback = traceback.format_exc()
+        logger.error(
+            "Report generation failed",
+            error=str(e),
+            error_type=type(e).__name__,
+            device_id=device_id,
+            target_date=target_date.isoformat(),
+            traceback=error_traceback,
+        )
+        # 返回更详细的错误信息
+        yield f"event: error\ndata: {json.dumps({'error': f'生成报告失败: {type(e).__name__}: {str(e)}'})}\n\n"
 
 
 @router.get(
@@ -1143,4 +1197,149 @@ async def batch_generate_reports(
         "message": "批量日报生成任务已完成",
         "target_date": (target_date or (date.today() - timedelta(days=1))).isoformat(),
         "results": results,
+    }
+
+
+# ==================== Diagnostic Endpoints ====================
+
+
+@router.get(
+    "/diagnose/db-status",
+    summary="诊断数据库连接状态",
+    description="""
+诊断当前后端使用的数据库类型和连接状态。
+
+用于排查 AI 报告生成失败时的数据源问题。
+""",
+)
+async def diagnose_db_status() -> dict[str, Any]:
+    """诊断数据库连接状态。"""
+    from app.db.postgres import db_url, is_sqlite, is_mysql, engine
+    from app.core.config import Settings
+
+    # 重新加载配置以获取最新值
+    fresh_settings = Settings()
+
+    # 掩码处理敏感信息
+    def mask_password(url: str) -> str:
+        import re
+        return re.sub(r':([^:@]+)@', ':****@', url)
+
+    return {
+        "database": {
+            "type": "sqlite" if is_sqlite else ("mysql" if is_mysql else "postgresql"),
+            "url_masked": mask_password(db_url),
+            "engine_url": mask_password(str(engine.url)),
+        },
+        "config": {
+            "mysql_host": fresh_settings.mysql_host,
+            "mysql_port": fresh_settings.mysql_port,
+            "mysql_db": fresh_settings.mysql_db,
+            "mysql_user": fresh_settings.mysql_user,
+            "mysql_password_set": bool(fresh_settings.mysql_password),
+            "database_url_type": fresh_settings.database_url.split(":")[0] if fresh_settings.database_url else None,
+        },
+        "spark_config": {
+            "app_id_set": bool(fresh_settings.spark_app_id),
+            "api_key_set": bool(fresh_settings.spark_api_key),
+            "api_secret_set": bool(fresh_settings.spark_api_secret),
+        },
+    }
+
+
+@router.get(
+    "/diagnose/device-data",
+    summary="诊断设备数据可用性",
+    description="""
+检查指定设备在指定日期是否有监测数据。
+
+用于排查 AI 报告生成时"无监测数据"错误的原因。
+""",
+)
+async def diagnose_device_data(
+    device_id: str = Query(..., description="设备 ID 或 MN 号"),
+    report_date: str | None = Query(default=None, description="检查日期 (YYYY-MM-DD)，默认今天"),
+) -> dict[str, Any]:
+    """诊断设备数据可用性。"""
+    from sqlalchemy import func, select
+    from app.models.monitoring_mysql import MonitoringDataMySQL
+
+    # 解析日期
+    if report_date:
+        try:
+            target_date = date.fromisoformat(report_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD")
+    else:
+        target_date = date.today()
+
+    start_time = datetime.combine(target_date, datetime.min.time())
+    end_time = datetime.combine(target_date, datetime.max.time())
+
+    async with AsyncSessionLocal() as db:
+        # 查询该设备该日期的数据量
+        count_query = select(func.count(MonitoringDataMySQL.id)).where(
+            MonitoringDataMySQL.device_id == device_id,
+            MonitoringDataMySQL.ts >= start_time,
+            MonitoringDataMySQL.ts <= end_time,
+        )
+        result = await db.execute(count_query)
+        data_count = result.scalar() or 0
+
+        # 查询该设备所有数据的日期范围
+        range_query = select(
+            func.min(MonitoringDataMySQL.ts).label("first_ts"),
+            func.max(MonitoringDataMySQL.ts).label("last_ts"),
+            func.count(MonitoringDataMySQL.id).label("total_count"),
+        ).where(MonitoringDataMySQL.device_id == device_id)
+        range_result = await db.execute(range_query)
+        range_row = range_result.one_or_none()
+
+        # 查询该设备的污染物类型
+        pollutants_query = select(
+            MonitoringDataMySQL.pollutant_code,
+            func.count(MonitoringDataMySQL.id).label("count"),
+        ).where(
+            MonitoringDataMySQL.device_id == device_id,
+            MonitoringDataMySQL.ts >= start_time,
+            MonitoringDataMySQL.ts <= end_time,
+        ).group_by(MonitoringDataMySQL.pollutant_code)
+        pollutants_result = await db.execute(pollutants_query)
+        pollutants = [
+            {"code": row.pollutant_code, "count": row.count}
+            for row in pollutants_result
+        ]
+
+        # 列出数据库中所有设备ID（用于对比）
+        devices_query = select(
+            MonitoringDataMySQL.device_id,
+            func.count(MonitoringDataMySQL.id).label("count"),
+        ).group_by(MonitoringDataMySQL.device_id).limit(20)
+        devices_result = await db.execute(devices_query)
+        all_devices = [
+            {"device_id": row.device_id, "count": row.count}
+            for row in devices_result
+        ]
+
+    return {
+        "query": {
+            "device_id": device_id,
+            "target_date": target_date.isoformat(),
+        },
+        "result": {
+            "data_count_on_date": data_count,
+            "has_data": data_count > 0,
+            "pollutants_on_date": pollutants,
+        },
+        "device_overall": {
+            "first_data_time": range_row.first_ts.isoformat() if range_row and range_row.first_ts else None,
+            "last_data_time": range_row.last_ts.isoformat() if range_row and range_row.last_ts else None,
+            "total_records": range_row.total_count if range_row else 0,
+        },
+        "available_devices": all_devices,
+        "diagnosis": (
+            f"设备 {device_id} 在 {target_date} 有 {data_count} 条数据"
+            if data_count > 0
+            else f"设备 {device_id} 在 {target_date} 无数据。请检查设备ID是否正确，或尝试其他日期。"
+        ),
     }

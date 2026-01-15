@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Upload,
@@ -13,7 +13,9 @@ import {
   Delete,
   Calendar,
   UploadFilled,
-  Refresh
+  Refresh,
+  OfficeBuilding,
+  InfoFilled
 } from '@element-plus/icons-vue'
 import type { UploadFile } from 'element-plus'
 import * as echarts from 'echarts'
@@ -27,6 +29,18 @@ import {
   type AIReportResponse,
   type InspectionStatus
 } from '@/api/selfInspection'
+import { organizationApi, type Organization } from '@/api/organizations'
+import { useAuthStore } from '@/stores/auth'
+import DeviceOnlineMetricsCard from '@/components/DeviceOnlineMetricsCard.vue'
+import { POLLUTANT_MAP, generateGroupedPollutantOptions } from '@/config/pollutants'
+
+// ============== Auth & Organization ==============
+const authStore = useAuthStore()
+const canEditDocuments = computed(() => authStore.canEditDocuments)
+const canDeleteDocuments = computed(() => authStore.canDeleteDocuments)
+const organizations = ref<Organization[]>([])
+const canSelectTargetOrg = computed(() => authStore.user?.is_superadmin === true || authStore.user?.role === 'doc_editor')
+const selectedOrgId = ref<string>('')  // 页面级组织选择器（超管/文案用）
 
 // ============== State ==============
 const loading = ref(false)
@@ -50,7 +64,8 @@ const uploadForm = reactive({
   inspection_date: '',
   inspection_agency: '',
   report_number: '',
-  use_ai_parsing: true  // AI智能解析开关
+  use_ai_parsing: true,  // AI智能解析开关
+  target_org_id: ''  // 目标组织ID（超级管理员专用）
 })
 const uploadFileList = ref<UploadFile[]>()
 const ocrProgressVisible = ref(false)
@@ -74,6 +89,8 @@ const aiReportDialogVisible = ref(false)
 const aiReportDateRange = ref<[Date, Date] | null>(null)
 const aiReportType = ref<'monthly' | 'quarterly'>('monthly')
 const aiReport = ref<AIReportResponse | null>(null)
+const aiReportIncludeFlow = ref(false)
+const aiReportCalculateLoad = ref(false)
 
 // ============== Computed ==============
 const statusOptions = [
@@ -83,8 +100,71 @@ const statusOptions = [
   { value: 'rejected', label: '已拒绝' }
 ]
 
+// Pollutant options for dropdown (grouped by category)
+const pollutantOptions = computed(() => generateGroupedPollutantOptions())
+
+// Handle pollutant selection - auto fill name, unit, etc.
+const handlePollutantSelect = (code: string, item: SelfInspectionDataItem) => {
+  const info = POLLUTANT_MAP[code.toLowerCase()]
+  if (info) {
+    item.pollutant_code = code
+    item.pollutant_name = info.name
+    item.unit = info.unit
+    // Note: standard_limit needs to be set based on discharge standards,
+    // which varies by industry. For now, keep it editable.
+  }
+}
+
+// Superscript number mapping for scientific notation
+const superscriptMap: Record<string, string> = {
+  '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+  '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+  '-': '⁻', '+': '⁺'
+}
+
+// Convert regular numbers to superscript
+const toSuperscript = (num: string): string => {
+  return num.split('').map(c => superscriptMap[c] || c).join('')
+}
+
+// Handle value input - auto convert scientific notation formats
+// Supports: "4.0E2", "4.0e2", "4.0*10^2", "4.0×10^2", "4.0x10^2"
+// Converts to: "4.0×10²"
+const handleValueInput = (val: string, item: SelfInspectionDataItem, field: 'value' | 'standard_limit') => {
+  if (!val) return
+
+  // Pattern 1: "4.0E2" or "4.0e2" -> "4.0×10²"
+  const eNotation = val.match(/^([\d.]+)[Ee]([+-]?\d+)$/)
+  if (eNotation) {
+    const [, mantissa, exp] = eNotation
+    item[field] = `${mantissa}×10${toSuperscript(exp)}`
+    return
+  }
+
+  // Pattern 2: "4.0*10^2" or "4.0×10^2" or "4.0x10^2" -> "4.0×10²"
+  const caretNotation = val.match(/^([\d.]+)[*×xX]10\^([+-]?\d+)$/)
+  if (caretNotation) {
+    const [, mantissa, exp] = caretNotation
+    item[field] = `${mantissa}×10${toSuperscript(exp)}`
+    return
+  }
+
+  // Pattern 3: "4.0*10**2" -> "4.0×10²"
+  const doubleStarNotation = val.match(/^([\d.]+)[*×xX]10\*\*([+-]?\d+)$/)
+  if (doubleStarNotation) {
+    const [, mantissa, exp] = doubleStarNotation
+    item[field] = `${mantissa}×10${toSuperscript(exp)}`
+    return
+  }
+}
+
 // AI智能解析模式下，只需要文件；传统模式需要填写日期和机构
+// 超级管理员还需要选择目标企业
 const canUpload = computed(() => {
+  // 平台人员（超管/文案）必须选择目标企业
+  if (canSelectTargetOrg.value && !uploadForm.target_org_id) {
+    return false
+  }
   if (uploadForm.use_ai_parsing) {
     return !!uploadForm.file
   }
@@ -114,6 +194,10 @@ const loadReports = async () => {
     if (filterDateRange.value) {
       params.start_date = formatDate(filterDateRange.value[0])
       params.end_date = formatDate(filterDateRange.value[1])
+    }
+    // 平台人员选择了企业时，按企业过滤
+    if (canSelectTargetOrg.value && selectedOrgId.value) {
+      params.target_org_id = selectedOrgId.value
     }
 
     const result = await selfInspectionApi.list(params)
@@ -150,23 +234,45 @@ const handleFileRemove = () => {
   uploadFileList.value = []
 }
 
+// Load organizations for super admin
+const loadOrganizations = async () => {
+  if (!canSelectTargetOrg.value) return
+  try {
+    organizations.value = await organizationApi.list()
+  } catch (error) {
+    console.error('Failed to load organizations:', error)
+  }
+}
+
 // Show upload dialog
-const showUploadDialog = () => {
+const showUploadDialog = async () => {
   uploadForm.file = null
   uploadForm.inspection_date = ''
   uploadForm.inspection_agency = ''
   uploadForm.report_number = ''
   uploadForm.use_ai_parsing = true
+  // 自动填充页面级选择的组织
+  uploadForm.target_org_id = selectedOrgId.value || ''
   uploadFileList.value = []
   ocrProgressVisible.value = false
   ocrProgressSteps.value = []
+
+  // 平台人员需要加载组织列表
+  if (canSelectTargetOrg.value && organizations.value.length === 0) {
+    await loadOrganizations()
+  }
+
   uploadDialogVisible.value = true
 }
 
 // Upload and OCR with AI parsing
 const handleUpload = async () => {
   if (!canUpload.value || !uploadForm.file) {
-    ElMessage.warning(uploadForm.use_ai_parsing ? '请选择文件' : '请填写完整信息并选择文件')
+    if (canSelectTargetOrg.value && !uploadForm.target_org_id) {
+      ElMessage.warning('请先选择目标企业')
+    } else {
+      ElMessage.warning(uploadForm.use_ai_parsing ? '请选择文件' : '请填写完整信息并选择文件')
+    }
     return
   }
 
@@ -199,7 +305,8 @@ const handleUpload = async () => {
       uploadForm.inspection_date || undefined,
       uploadForm.inspection_agency || undefined,
       uploadForm.report_number || undefined,
-      uploadForm.use_ai_parsing
+      uploadForm.use_ai_parsing,
+      uploadForm.target_org_id || undefined  // 超级管理员指定的目标企业
     )
 
     // 更新进度为完成
@@ -350,7 +457,8 @@ const fetchTrendAnalysis = async () => {
   try {
     const result = await selfInspectionApi.getTrendAnalysis({
       start_date: formatDate(trendDateRange.value[0]),
-      end_date: formatDate(trendDateRange.value[1])
+      end_date: formatDate(trendDateRange.value[1]),
+      target_org_id: selectedOrgId.value || undefined  // 超级管理员按企业过滤
     })
 
     trendData.value = result
@@ -461,6 +569,9 @@ const showAIReportDialog = () => {
   aiReportDateRange.value = [start, end]
   aiReportType.value = 'monthly'
   aiReport.value = null
+  // 默认开启整合在线数据：企业用户直接可用；平台人员若未选企业则默认关闭避免误操作
+  aiReportIncludeFlow.value = canSelectTargetOrg.value ? Boolean(selectedOrgId.value) : true
+  aiReportCalculateLoad.value = false
   aiReportDialogVisible.value = true
 }
 
@@ -471,12 +582,21 @@ const generateAIReport = async () => {
     return
   }
 
+  // 平台人员需要选择组织才能获取流量数据
+  if (canSelectTargetOrg.value && aiReportIncludeFlow.value && !selectedOrgId.value) {
+    ElMessage.warning('整合流量数据需要先在页面上方选择企业')
+    return
+  }
+
   aiReportLoading.value = true
   try {
     const result = await selfInspectionApi.generateAIReport({
       start_date: formatDate(aiReportDateRange.value[0]),
       end_date: formatDate(aiReportDateRange.value[1]),
-      report_type: aiReportType.value
+      report_type: aiReportType.value,
+      include_flow_data: aiReportIncludeFlow.value,
+      calculate_pollutant_load: aiReportCalculateLoad.value,
+      target_org_id: selectedOrgId.value || undefined  // 平台人员按企业过滤
     })
 
     aiReport.value = result
@@ -521,7 +641,19 @@ const handleSizeChange = (size: number) => {
 }
 
 // Initialize
-onMounted(() => {
+onMounted(async () => {
+  loadReports()
+  // 平台人员页面加载时获取组织列表
+  if (canSelectTargetOrg.value) {
+    await loadOrganizations()
+  }
+})
+
+// 监听组织选择变化，超级管理员切换企业时重新加载数据
+watch(selectedOrgId, () => {
+  // 重置分页到第一页
+  currentPage.value = 1
+  // 重新加载报告列表
   loadReports()
 })
 
@@ -545,7 +677,26 @@ const handleTrendDialogClose = () => {
             <span>文档数据管理</span>
           </div>
           <div class="header-actions">
-            <el-button type="primary" @click="showUploadDialog">
+            <!-- 平台人员：页面级组织选择器 -->
+            <el-select
+              v-if="canSelectTargetOrg"
+              v-model="selectedOrgId"
+              placeholder="选择企业"
+              style="width: 200px; margin-right: 12px"
+              clearable
+              filterable
+            >
+              <template #prefix>
+                <el-icon><OfficeBuilding /></el-icon>
+              </template>
+              <el-option
+                v-for="org in organizations"
+                :key="org.id"
+                :label="org.name"
+                :value="org.id"
+              />
+            </el-select>
+            <el-button v-if="canEditDocuments" type="primary" @click="showUploadDialog">
               <el-icon><Upload /></el-icon>
               上传检测报告
             </el-button>
@@ -601,6 +752,12 @@ const handleTrendDialogClose = () => {
       </el-form>
     </el-card>
 
+    <!-- Online Metrics Card (Data from DAQ devices - read only) -->
+    <DeviceOnlineMetricsCard
+      :hours="24"
+      :target-org-id="selectedOrgId"
+    />
+
     <!-- Reports Table -->
     <el-card class="table-card">
       <el-table
@@ -651,6 +808,7 @@ const handleTrendDialogClose = () => {
               查看
             </el-button>
             <el-button
+              v-if="canDeleteDocuments"
               type="danger"
               link
               size="small"
@@ -685,6 +843,31 @@ const handleTrendDialogClose = () => {
       destroy-on-close
     >
       <el-form label-width="100px" label-position="left">
+        <!-- 平台人员：选择目标企业 -->
+        <el-form-item v-if="canSelectTargetOrg" label="目标企业" required>
+          <el-select
+            v-model="uploadForm.target_org_id"
+            placeholder="请选择要上传报告的企业"
+            style="width: 100%"
+            :disabled="uploadLoading"
+            filterable
+          >
+            <el-option
+              v-for="org in organizations"
+              :key="org.id"
+              :label="org.name"
+              :value="org.id"
+            >
+              <span>{{ org.name }}</span>
+              <span style="color: #909399; font-size: 12px; margin-left: 8px;">{{ org.code }}</span>
+            </el-option>
+          </el-select>
+          <div class="form-tip">
+            <el-icon><OfficeBuilding /></el-icon>
+            作为环保管家，您可以为不同企业上传自检报告
+          </div>
+        </el-form-item>
+
         <!-- AI解析模式开关 -->
         <el-form-item label="解析模式">
           <div class="parse-mode-switch">
@@ -840,48 +1023,81 @@ const handleTrendDialogClose = () => {
         <div class="data-items-section">
           <div class="section-header">
             <span>检测数据项</span>
-            <el-button type="primary" size="small" @click="addDataItem">
+            <el-button v-if="canEditDocuments" type="primary" size="small" @click="addDataItem">
               + 添加数据项
             </el-button>
           </div>
 
           <el-table :data="editableDataItems" border size="small" max-height="400">
-            <el-table-column label="污染物代码" width="120">
+            <el-table-column label="污染物" width="200">
               <template #default="{ row }">
-                <el-input v-model="row.pollutant_code" size="small" placeholder="如: w01018" />
+                <el-select
+                  v-model="row.pollutant_code"
+                  size="small"
+                  filterable
+                  placeholder="搜索或选择"
+                  style="width: 100%"
+                  :disabled="!canEditDocuments"
+                  @change="(val: string) => handlePollutantSelect(val, row)"
+                >
+                  <el-option-group
+                    v-for="group in pollutantOptions"
+                    :key="group.label"
+                    :label="group.label"
+                  >
+                    <el-option
+                      v-for="opt in group.options"
+                      :key="opt.value"
+                      :label="opt.label"
+                      :value="opt.value"
+                    />
+                  </el-option-group>
+                </el-select>
               </template>
             </el-table-column>
-            <el-table-column label="污染物名称" width="140">
+            <el-table-column label="污染物名称" width="100">
               <template #default="{ row }">
-                <el-input v-model="row.pollutant_name" size="small" placeholder="如: COD" />
+                <span class="pollutant-name">{{ row.pollutant_name || '-' }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="检测值" width="100">
+            <el-table-column label="检测值" width="120">
               <template #default="{ row }">
-                <el-input-number v-model="row.value" size="small" :precision="3" :min="0" controls-position="right" />
+                <el-input
+                  v-model="row.value"
+                  size="small"
+                  placeholder="如: 4.0×10²"
+                  :disabled="!canEditDocuments"
+                  @input="(val: string) => handleValueInput(val, row, 'value')"
+                />
               </template>
             </el-table-column>
             <el-table-column label="单位" width="90">
               <template #default="{ row }">
-                <el-input v-model="row.unit" size="small" placeholder="mg/L" />
+                <el-input v-model="row.unit" size="small" placeholder="mg/L" :disabled="!canEditDocuments" />
               </template>
             </el-table-column>
-            <el-table-column label="标准限值" width="100">
+            <el-table-column label="标准限值" width="120">
               <template #default="{ row }">
-                <el-input-number v-model="row.standard_limit" size="small" :precision="3" :min="0" controls-position="right" />
+                <el-input
+                  v-model="row.standard_limit"
+                  size="small"
+                  placeholder="如: 4.0×10²"
+                  :disabled="!canEditDocuments"
+                  @input="(val: string) => handleValueInput(val, row, 'standard_limit')"
+                />
               </template>
             </el-table-column>
             <el-table-column label="是否达标" width="90" align="center">
               <template #default="{ row }">
-                <el-switch v-model="row.is_compliant" active-color="#67c23a" inactive-color="#f56c6c" />
+                <el-switch v-model="row.is_compliant" active-color="#67c23a" inactive-color="#f56c6c" :disabled="!canEditDocuments" />
               </template>
             </el-table-column>
             <el-table-column label="采样点位" min-width="120">
               <template #default="{ row }">
-                <el-input v-model="row.sampling_point" size="small" placeholder="选填" />
+                <el-input v-model="row.sampling_point" size="small" placeholder="选填" :disabled="!canEditDocuments" />
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="70" align="center" fixed="right">
+            <el-table-column v-if="canEditDocuments" label="操作" width="70" align="center" fixed="right">
               <template #default="{ $index }">
                 <el-button type="danger" link size="small" @click="removeDataItem($index)">
                   删除
@@ -894,23 +1110,25 @@ const handleTrendDialogClose = () => {
 
       <template #footer>
         <div class="verify-footer">
-          <el-button @click="verifyDialogVisible = false">取消</el-button>
-          <el-button
-            type="danger"
-            :loading="verifyLoading"
-            @click="verifyReport('rejected')"
-          >
-            <el-icon><Close /></el-icon>
-            拒绝
-          </el-button>
-          <el-button
-            type="success"
-            :loading="verifyLoading"
-            @click="verifyReport('verified')"
-          >
-            <el-icon><Check /></el-icon>
-            通过校验
-          </el-button>
+          <el-button @click="verifyDialogVisible = false">{{ canEditDocuments ? '取消' : '关闭' }}</el-button>
+          <template v-if="canEditDocuments">
+            <el-button
+              type="danger"
+              :loading="verifyLoading"
+              @click="verifyReport('rejected')"
+            >
+              <el-icon><Close /></el-icon>
+              拒绝
+            </el-button>
+            <el-button
+              type="success"
+              :loading="verifyLoading"
+              @click="verifyReport('verified')"
+            >
+              <el-icon><Check /></el-icon>
+              通过校验
+            </el-button>
+          </template>
         </div>
       </template>
     </el-dialog>
@@ -989,6 +1207,23 @@ const handleTrendDialogClose = () => {
           </el-button>
         </div>
 
+        <!-- Flow Data Integration Options -->
+        <div class="flow-options">
+          <el-checkbox v-model="aiReportIncludeFlow" :disabled="aiReportLoading">
+            整合瞬时流量数据
+          </el-checkbox>
+          <el-checkbox
+            v-model="aiReportCalculateLoad"
+            :disabled="aiReportLoading || !aiReportIncludeFlow"
+          >
+            计算污染负荷
+          </el-checkbox>
+          <div class="flow-options-tip">
+            <el-icon><InfoFilled /></el-icon>
+            <span>流量数据来自数采仪（实时监测），检测数据来自第三方检测报告</span>
+          </div>
+        </div>
+
         <div v-if="aiReport" class="ai-report-result">
           <el-card shadow="never" class="report-card">
             <template #header>
@@ -996,6 +1231,46 @@ const handleTrendDialogClose = () => {
                 <span>{{ aiReport.period }} 运维分析报告</span>
                 <span class="report-time">生成时间: {{ new Date(aiReport.generated_at).toLocaleString('zh-CN') }}</span>
               </div>
+            </template>
+
+            <template v-if="aiReport.flow_data">
+              <div class="report-flow">
+                <h4>在线数据摘要（数采仪）</h4>
+                <el-row :gutter="12">
+                  <el-col :span="8">
+                    <el-tag type="info" size="small">平均流量: {{ aiReport.flow_data.avg_flow.toFixed(2) }} L/s</el-tag>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-tag type="info" size="small">日总流量: {{ (aiReport.flow_data.daily_volume_m3 ?? aiReport.flow_data.total_volume).toFixed(2) }} m³</el-tag>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-tag type="info" size="small">数据点: {{ aiReport.flow_data.data_points_count }}</el-tag>
+                  </el-col>
+                </el-row>
+              </div>
+              <el-divider />
+            </template>
+
+            <template v-if="aiReport.online_data && aiReport.online_data.pollutants && aiReport.online_data.pollutants.length > 0">
+              <div class="report-online">
+                <h4>在线监测指标概览（数采仪）</h4>
+                <el-collapse>
+                  <el-collapse-item
+                    :title="`查看指标统计（${aiReport.online_data.pollutants.length}项）`"
+                    name="online"
+                  >
+                    <ul class="online-metrics-list">
+                      <li v-for="p in aiReport.online_data.pollutants.slice(0, 12)" :key="p.pollutant_code">
+                        {{ p.pollutant_name }}（{{ p.pollutant_code }}）：均值 {{ p.avg ?? '-' }}{{ p.unit || '' }}，范围 {{ p.min ?? '-' }}-{{ p.max ?? '-' }}{{ p.unit || '' }}（{{ p.count }}点 / {{ p.device_count }}设备）
+                      </li>
+                    </ul>
+                    <div v-if="aiReport.online_data.note" class="online-metrics-note">
+                      {{ aiReport.online_data.note }}
+                    </div>
+                  </el-collapse-item>
+                </el-collapse>
+              </div>
+              <el-divider />
             </template>
 
             <div class="report-summary">
@@ -1013,6 +1288,39 @@ const handleTrendDialogClose = () => {
                 </li>
               </ul>
             </div>
+
+            <!-- Pollutant Loads Section -->
+            <template v-if="aiReport.pollutant_loads">
+              <el-divider />
+              <div class="pollutant-loads-section">
+                <h4>污染负荷计算</h4>
+                <div class="loads-source-info">
+                  <el-tag type="info" size="small">流量来源: {{ aiReport.pollutant_loads.flow_source }}</el-tag>
+                  <el-tag type="info" size="small">浓度来源: {{ aiReport.pollutant_loads.concentration_source }}</el-tag>
+                </div>
+                <div class="loads-summary">
+                  <span>平均流量: <strong>{{ aiReport.pollutant_loads.avg_flow_l_s.toFixed(2) }} L/s</strong></span>
+                  <span>日排放量: <strong>{{ aiReport.pollutant_loads.daily_volume_m3.toFixed(2) }} m³/d</strong></span>
+                </div>
+                <el-table :data="Object.values(aiReport.pollutant_loads.pollutant_loads)" size="small" border>
+                  <el-table-column prop="name" label="污染物" width="100" />
+                  <el-table-column prop="avg_concentration_mg_l" label="平均浓度(mg/L)" width="130">
+                    <template #default="{ row }">{{ row.avg_concentration_mg_l.toFixed(3) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="daily_load_kg" label="日负荷(kg/d)" width="120">
+                    <template #default="{ row }">{{ row.daily_load_kg.toFixed(3) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="monthly_load_kg" label="月负荷(kg/月)" width="130">
+                    <template #default="{ row }">{{ row.monthly_load_kg.toFixed(2) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="formula" label="计算公式" min-width="200" show-overflow-tooltip />
+                </el-table>
+                <div class="loads-note">
+                  <el-icon><InfoFilled /></el-icon>
+                  {{ aiReport.pollutant_loads.note }}
+                </div>
+              </div>
+            </template>
 
             <el-divider />
 
@@ -1070,6 +1378,15 @@ const handleTrendDialogClose = () => {
 }
 
 /* Upload Dialog */
+.form-tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+}
+
 .upload-area {
   width: 100%;
 }
@@ -1166,6 +1483,22 @@ const handleTrendDialogClose = () => {
   gap: 12px;
 }
 
+/* Pollutant name display */
+.pollutant-name {
+  color: #606266;
+  font-size: 13px;
+}
+
+/* Pollutant select styles */
+:deep(.el-select-dropdown__item) {
+  font-size: 13px;
+}
+
+:deep(.el-select-group__title) {
+  font-size: 12px;
+  color: #909399;
+}
+
 /* Trend Dialog */
 .trend-content {
   min-height: 400px;
@@ -1217,7 +1550,26 @@ const handleTrendDialogClose = () => {
   display: flex;
   gap: 16px;
   align-items: center;
+  margin-bottom: 16px;
+}
+
+.flow-options {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 16px;
+  background: #f5f7fa;
+  border-radius: 8px;
   margin-bottom: 24px;
+}
+
+.flow-options-tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #909399;
+  margin-left: auto;
 }
 
 .report-card {
@@ -1231,6 +1583,28 @@ const handleTrendDialogClose = () => {
 }
 
 .report-time {
+  font-size: 12px;
+  color: #909399;
+}
+
+.report-flow,
+.report-online {
+  margin-bottom: 8px;
+}
+
+.online-metrics-list {
+  padding-left: 18px;
+  margin: 8px 0 0 0;
+  color: #606266;
+}
+
+.online-metrics-list li {
+  margin-bottom: 6px;
+  line-height: 1.6;
+}
+
+.online-metrics-note {
+  margin-top: 10px;
   font-size: 12px;
   color: #909399;
 }
@@ -1262,6 +1636,39 @@ const handleTrendDialogClose = () => {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 12px;
+  color: #909399;
+}
+
+/* Pollutant Loads Section */
+.pollutant-loads-section h4 {
+  margin: 0 0 12px 0;
+  color: #1D1D1F;
+  font-size: 14px;
+}
+
+.loads-source-info {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.loads-summary {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+  color: #606266;
+}
+
+.loads-summary strong {
+  color: #0B1727;
+}
+
+.loads-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
   font-size: 12px;
   color: #909399;
 }

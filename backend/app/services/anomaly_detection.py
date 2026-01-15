@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """AI-based anomaly detection service using XGBoost."""
 
 import pickle
@@ -8,9 +10,11 @@ from typing import Any
 import numpy as np
 import structlog
 from xgboost import XGBClassifier
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.db.tdengine import get_tdengine_client
+from app.db.postgres import AsyncSessionLocal
+from app.services.monitoring_service import MonitoringService
 
 settings = get_settings()
 logger = structlog.get_logger()
@@ -59,7 +63,8 @@ class AnomalyDetector:
         if len(data) < 5:
             return np.array([])
 
-        values = np.array([d["value"] for d in data])
+        # 强制转换为 float，避免 MySQL Decimal 类型导致的运算错误
+        values = np.array([float(d["value"]) for d in data], dtype=float)
         features = []
 
         for i in range(4, len(values)):
@@ -163,7 +168,8 @@ class AnomalyDetector:
         if len(data) < 2:
             return data
 
-        values = np.array([d["value"] for d in data])
+        # 强制转换为 float，避免 MySQL Decimal 类型导致的运算错误
+        values = np.array([float(d["value"]) for d in data], dtype=float)
         mean, std = np.mean(values), np.std(values)
 
         results = []
@@ -186,20 +192,32 @@ class AnomalyDetector:
         device_id: str,
         pollutant_code: str,
         current_value: float,
+        db_session: AsyncSession | None = None,
     ) -> dict[str, Any]:
         """Real-time anomaly detection for incoming data point."""
-        # Get recent historical data for context
-        client = get_tdengine_client()
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(hours=1)
+        # Get recent historical data for context (使用 MySQL)
+        end_time = datetime.now() + timedelta(hours=9)  # UTC+8 buffer
+        start_time = end_time - timedelta(hours=1 + 9)
 
-        historical = await client.query_monitoring_data(
-            device_id=device_id,
-            pollutant_code=pollutant_code,
-            start_time=start_time,
-            end_time=end_time,
-            limit=60,
-        )
+        if db_session:
+            service = MonitoringService(db_session)
+            historical = await service.query_monitoring_data(
+                device_id=device_id,
+                pollutant_code=pollutant_code,
+                start_time=start_time,
+                end_time=end_time,
+                limit=60,
+            )
+        else:
+            async with AsyncSessionLocal() as session:
+                service = MonitoringService(session)
+                historical = await service.query_monitoring_data(
+                    device_id=device_id,
+                    pollutant_code=pollutant_code,
+                    start_time=start_time,
+                    end_time=end_time,
+                    limit=60,
+                )
 
         if len(historical) < 5:
             return {

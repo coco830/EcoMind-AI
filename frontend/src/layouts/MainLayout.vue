@@ -10,7 +10,8 @@ import {
   Document,
   Setting,
   ArrowDown,
-  Ticket
+  Ticket,
+  FolderOpened
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -26,6 +27,7 @@ const baseMenuItems = [
   { path: '/data', icon: DataLine, title: '数据查询' },
   { path: '/alarms', icon: Bell, title: '告警管理' },
   { path: '/reports', icon: Document, title: '报表中心' },
+  { path: '/self-inspection', icon: FolderOpened, title: '文档数据' },
   { path: '/settings', icon: Setting, title: '系统设置' }
 ]
 

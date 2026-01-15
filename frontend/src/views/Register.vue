@@ -2,6 +2,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { authApi } from '@/api/auth'
+import { apiBasePath } from '@/api/request'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
@@ -43,7 +44,7 @@ const validateInvitationCode = async () => {
   checkingCode.value = true
   try {
     const response = await fetch(
-      `${import.meta.env.VITE_API_BASE_URL}/api/v1/invitations/validate/${encodeURIComponent(form.invitation_code.trim())}`
+      `${apiBasePath}/invitations/validate/${encodeURIComponent(form.invitation_code.trim())}`
     )
     const data = await response.json()
 

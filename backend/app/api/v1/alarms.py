@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Alarm management API endpoints."""
 
 from datetime import datetime
@@ -13,7 +15,7 @@ from app.db.postgres import get_db
 from app.models.alarm import Alarm, AlarmCreate, AlarmResponse, AlarmStatus, AlarmLevel
 from app.models.device import Device
 from app.models.user import User
-from app.api.deps import get_current_active_user, require_operator
+from app.api.deps import get_current_active_user, require_superadmin, can_cross_tenant_read
 
 router = APIRouter()
 
@@ -26,7 +28,7 @@ def _build_org_filter_query(query, current_user: User, join_device: bool = True)
         current_user: Current authenticated user
         join_device: Whether to join Device table (set False if already joined via selectinload)
     """
-    if current_user.is_superadmin:
+    if can_cross_tenant_read(current_user):
         return query
     if current_user.org_id:
         if join_device:
@@ -120,7 +122,7 @@ def _check_alarm_access(
     Note: This function expects alarm.device to be preloaded via selectinload
     to avoid N+1 query issues. Use selectinload(Alarm.device) when querying.
     """
-    if current_user.is_superadmin:
+    if can_cross_tenant_read(current_user):
         return
 
     if current_user.org_id:
@@ -162,7 +164,7 @@ async def get_alarm(
 async def create_alarm(
     alarm_data: AlarmCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_operator)],
+    current_user: Annotated[User, Depends(require_superadmin)],
 ) -> AlarmResponse:
     """Create a new alarm manually."""
     alarm = Alarm(
@@ -185,7 +187,7 @@ async def create_alarm(
 async def acknowledge_alarm(
     alarm_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_operator)],
+    current_user: Annotated[User, Depends(require_superadmin)],
 ) -> AlarmResponse:
     """Acknowledge an alarm. Access controlled by organization."""
     result = await db.execute(
@@ -224,7 +226,7 @@ async def acknowledge_alarm(
 async def resolve_alarm(
     alarm_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_operator)],
+    current_user: Annotated[User, Depends(require_superadmin)],
 ) -> AlarmResponse:
     """Resolve an alarm. Access controlled by organization."""
     result = await db.execute(
@@ -258,12 +260,12 @@ async def resolve_alarm(
     return AlarmResponse.model_validate(alarm)
 
 
-@router.delete("/{alarm_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{alarm_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_alarm(
     alarm_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_operator)],
-) -> None:
+    current_user: Annotated[User, Depends(require_superadmin)],
+):
     """Delete an alarm. Access controlled by organization."""
     result = await db.execute(
         select(Alarm)
@@ -297,7 +299,7 @@ async def get_alarm_stats(
 
     # Base query with organization filter
     base_query = select(Alarm.id)
-    if not current_user.is_superadmin and current_user.org_id:
+    if (not can_cross_tenant_read(current_user)) and current_user.org_id:
         base_query = base_query.join(Device, Alarm.device_id == Device.id).where(
             Device.org_id == current_user.org_id
         )
@@ -316,7 +318,7 @@ async def get_alarm_stats(
     )
 
     # Apply organization filter
-    if not current_user.is_superadmin and current_user.org_id:
+    if (not can_cross_tenant_read(current_user)) and current_user.org_id:
         status_query = status_query.select_from(Alarm).join(
             Device, Alarm.device_id == Device.id
         ).where(Device.org_id == current_user.org_id)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """API dependencies for authentication and authorization."""
 
 from typing import Annotated
@@ -7,6 +9,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.security import decode_access_token
 from app.db.postgres import get_db
@@ -14,6 +17,35 @@ from app.models.user import User, UserRole
 from app.models.organization import Organization
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+def _is_platform_staff(user: User) -> bool:
+    """Platform staff = internal accounts under PLATFORM_ADMIN org.
+
+    Important: We intentionally require organization.code == PLATFORM_ADMIN so that
+    a tenant user with role=doc_editor/viewer cannot gain cross-tenant access.
+    """
+    org = getattr(user, "organization", None)
+    if org is None:
+        return False
+    if getattr(org, "code", None) != "PLATFORM_ADMIN":
+        return False
+    return user.role in {UserRole.DOC_EDITOR.value, UserRole.VIEWER.value}
+
+
+def can_cross_tenant_read(user: User) -> bool:
+    """Allow cross-tenant read for superadmin and platform staff."""
+    return bool(user.is_superadmin) or _is_platform_staff(user)
+
+
+def can_cross_tenant_doc_write(user: User) -> bool:
+    """Allow cross-tenant doc operations for superadmin and platform doc_editor."""
+    if bool(user.is_superadmin):
+        return True
+    org = getattr(user, "organization", None)
+    if org is None or getattr(org, "code", None) != "PLATFORM_ADMIN":
+        return False
+    return user.role == UserRole.DOC_EDITOR.value
 
 
 async def get_current_user(
@@ -35,7 +67,11 @@ async def get_current_user(
     if user_id is None:
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.organization))
+        .where(User.id == UUID(user_id))
+    )
     user = result.scalar_one_or_none()
 
     if user is None:
@@ -57,41 +93,67 @@ async def get_current_active_user(
     return current_user
 
 
-async def require_admin(
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> User:
-    """Require admin role."""
-    if current_user.role != UserRole.ADMIN.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required",
-        )
-    return current_user
-
-
-async def require_operator(
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> User:
-    """Require operator or admin role; allow superadmin bypass."""
-    if current_user.is_superadmin:
-        return current_user
-
-    if current_user.role not in [UserRole.ADMIN.value, UserRole.OPERATOR.value]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Operator privileges required",
-        )
-    return current_user
-
-
 async def require_superadmin(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
-    """Require superadmin privileges (platform-level admin)."""
+    """Require superadmin privileges (platform-level admin).
+
+    超级管理员权限：可以管理邀请码、用户、设备等所有数据
+    """
     if not current_user.is_superadmin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Superadmin privileges required",
+            detail="需要超级管理员权限",
+        )
+    return current_user
+
+
+async def require_platform_staff_read(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Allow superadmin + platform staff (doc_editor/viewer under PLATFORM_ADMIN) to read cross-tenant data."""
+    if current_user.is_superadmin:
+        return current_user
+    if not _is_platform_staff(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要平台人员权限",
+        )
+    return current_user
+
+
+async def require_doc_editor(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Require doc_editor or superadmin role.
+
+    文档编辑权限：可以上传、编辑自检报告等文档数据
+    - superadmin: 允许
+    - doc_editor: 允许
+    - viewer: 拒绝
+    """
+    if current_user.is_superadmin:
+        return current_user
+
+    if current_user.role not in [UserRole.SUPERADMIN.value, UserRole.DOC_EDITOR.value]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要文档编辑权限",
+        )
+    return current_user
+
+
+async def require_write_permission(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Require write permission (superadmin only for most operations).
+
+    写入权限：仅超级管理员可以修改设备、用户等核心数据
+    """
+    if not current_user.is_superadmin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="您没有写入权限，请联系管理员",
         )
     return current_user
 

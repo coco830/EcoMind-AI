@@ -35,7 +35,7 @@ export interface UpdateInvitationRequest {
 export const invitationsApi = {
   // 获取所有邀请码（超级管理员）
   getAll(): Promise<InvitationCode[]> {
-    return request.get('/invitations/')
+    return request.get('/invitations')
   },
 
   // 获取单个邀请码
@@ -45,7 +45,7 @@ export const invitationsApi = {
 
   // 创建邀请码
   create(data: CreateInvitationRequest): Promise<InvitationCode> {
-    return request.post('/invitations/', data)
+    return request.post('/invitations', data)
   },
 
   // 更新邀请码

@@ -1,4 +1,4 @@
-import { request } from './request'
+import { request, apiBasePath } from './request'
 import axios from 'axios'
 
 export interface PollutantStats {
@@ -67,7 +67,7 @@ export const reportApi = {
     const token = localStorage.getItem('token')
 
     const response = await axios.post(
-      `/api/v1/reports/download?format=${format}`,
+      `${apiBasePath}/reports/download?format=${format}`,
       data,
       {
         headers: {

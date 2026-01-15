@@ -2,11 +2,22 @@ import axios from 'axios'
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
 
-// 生产环境使用完整 API URL，开发环境使用代理
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || ''
+const normalizeBaseUrl = (url: string) => url.replace(/\/+$/, '')
+
+// If the page is served over HTTPS but the configured API uses HTTP, upgrade to HTTPS to avoid mixed content.
+const ensureHttps = (url: string) => {
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && url.startsWith('http://')) {
+    return url.replace(/^http:\/\//i, 'https://')
+  }
+  return url
+}
+
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim()
+export const resolvedApiBaseUrl = normalizeBaseUrl(ensureHttps(rawApiBaseUrl))
+export const apiBasePath = resolvedApiBaseUrl ? `${resolvedApiBaseUrl}/api/v1` : '/api/v1'
 
 const instance: AxiosInstance = axios.create({
-  baseURL: `${apiBaseUrl}/api/v1`,
+  baseURL: apiBasePath,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json'

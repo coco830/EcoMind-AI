@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 """User models."""
 
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import EmailStr, Field
@@ -14,12 +17,17 @@ from app.models.base import BaseSchema
 
 
 class UserRole(str, Enum):
-    """User role enumeration."""
+    """User role enumeration.
 
-    SUPER_ADMIN = "super_admin"
-    ADMIN = "admin"
-    OPERATOR = "operator"
-    VIEWER = "viewer"
+    角色权限说明：
+    - SUPERADMIN: 超级管理员（环保管家），拥有全部权限
+    - DOC_EDITOR: 文档编辑（技术文案），可编辑文档数据，其他只读
+    - VIEWER: 只读用户（销售），所有页面只读，用于演示
+    """
+
+    SUPERADMIN = "superadmin"      # 超级管理员 - 全部权限
+    DOC_EDITOR = "doc_editor"      # 文档编辑 - 文档数据读写 + 其他只读
+    VIEWER = "viewer"              # 只读用户 - 所有只读
 
 
 class User(Base):
@@ -33,11 +41,11 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    full_name: Mapped[str | None] = mapped_column(String(128))
+    full_name: Mapped[Optional[str]] = mapped_column(String(128))
     role: Mapped[str] = mapped_column(String(32), default=UserRole.VIEWER.value)
     is_active: Mapped[bool] = mapped_column(default=True)
     is_superadmin: Mapped[bool] = mapped_column(default=False)
-    org_id: Mapped[UUID | None] = mapped_column(
+    org_id: Mapped[Optional[UUID]] = mapped_column(
         GUID, ForeignKey("organizations.id")
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -57,10 +65,10 @@ class UserCreate(BaseSchema):
     username: str = Field(..., min_length=3, max_length=64)
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
-    full_name: str | None = Field(None, max_length=128)
-    role: UserRole = UserRole.OPERATOR  # Changed from VIEWER to OPERATOR for new users
-    org_id: UUID | None = None
-    invitation_code: str | None = Field(None, description="邀请码（公开注册必填）")
+    full_name: Optional[str] = Field(None, max_length=128)
+    role: UserRole = UserRole.VIEWER  # New users start as viewer, role upgrades by superadmin
+    org_id: Optional[UUID] = None
+    invitation_code: Optional[str] = Field(None, description="邀请码（公开注册必填）")
 
 
 class UserInDB(BaseSchema):
@@ -70,11 +78,11 @@ class UserInDB(BaseSchema):
     username: str
     email: str
     hashed_password: str
-    full_name: str | None = None
+    full_name: Optional[str] = None
     role: UserRole
     is_active: bool
     is_superadmin: bool = False
-    org_id: UUID | None = None
+    org_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
 
@@ -85,11 +93,11 @@ class UserResponse(BaseSchema):
     id: UUID
     username: str
     email: str
-    full_name: str | None = None
+    full_name: Optional[str] = None
     role: UserRole
     is_active: bool
     is_superadmin: bool = False
-    org_id: UUID | None = None
+    org_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
 

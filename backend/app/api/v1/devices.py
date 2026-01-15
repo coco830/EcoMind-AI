@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 """Device management API endpoints."""
 
 import json
+import hashlib
 from typing import Annotated
 from uuid import UUID
 
@@ -10,13 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.postgres import get_db
+from app.core.masking import is_demo_viewer, mask_device_name
 from app.models.device import (
     Device, DeviceCreate, DeviceResponse, DeviceStatus, DeviceType,
     IndustryType, ThresholdConfig, INDUSTRY_STANDARD_MAP
 )
 from app.models.organization import Organization
 from app.models.user import User
-from app.api.deps import get_current_active_user, require_operator
+from app.api.deps import get_current_active_user, require_superadmin, can_cross_tenant_read
 
 router = APIRouter()
 
@@ -39,7 +43,7 @@ def _deserialize_thresholds(thresholds_json: str | None) -> ThresholdConfig | No
         return None
 
 
-def _device_to_response(device: Device) -> DeviceResponse:
+def _device_to_response(device: Device, *, mask: bool = False) -> DeviceResponse:
     """Convert Device ORM model to DeviceResponse with threshold parsing."""
     # Parse pollutant_codes
     pollutant_codes = None
@@ -57,18 +61,28 @@ def _device_to_response(device: Device) -> DeviceResponse:
         except ValueError:
             pass
 
+    name = device.name
+    address = device.address
+    latitude = device.latitude
+    longitude = device.longitude
+    if mask:
+        name = mask_device_name(device_id=str(device.id), mn=device.mn)
+        address = None
+        latitude = None
+        longitude = None
+
     return DeviceResponse(
         id=device.id,
         mn=device.mn,
-        name=device.name,
+        name=name,
         device_type=DeviceType(device.device_type),
         status=DeviceStatus(device.status),
         org_id=device.org_id,
         industry_type=industry_type,
         national_standard=device.national_standard,
-        latitude=device.latitude,
-        longitude=device.longitude,
-        address=device.address,
+        latitude=latitude,
+        longitude=longitude,
+        address=address,
         pollutant_codes=pollutant_codes,
         thresholds=thresholds,
         last_heartbeat=device.last_heartbeat,
@@ -123,8 +137,8 @@ async def get_device_stats(
         func.count().filter(Device.status == DeviceStatus.MAINTENANCE.value).label("maintenance"),
     ).select_from(Device)
 
-    # Superadmin can see all devices, regular users only see their org's devices
-    if not current_user.is_superadmin and current_user.org_id:
+    # Superadmin/platform staff can see all devices, tenant users only see their org's devices
+    if not can_cross_tenant_read(current_user) and current_user.org_id:
         status_query = status_query.where(Device.org_id == current_user.org_id)
 
     result = await db.execute(status_query)
@@ -157,9 +171,9 @@ async def list_devices(
     # Use selectinload to preload organization relationship (avoids N+1 queries)
     query = select(Device).options(selectinload(Device.organization))
 
-    # Superadmin can see all devices (optionally filtered by org_id)
-    # Regular users can only see their organization's devices
-    if current_user.is_superadmin:
+    # Superadmin/platform staff can see all devices (optionally filtered by org_id)
+    # Tenant users can only see their organization's devices
+    if can_cross_tenant_read(current_user):
         if org_id:
             query = query.where(Device.org_id == org_id)
     elif current_user.org_id:
@@ -172,7 +186,8 @@ async def list_devices(
     result = await db.execute(query)
     devices = result.scalars().all()
 
-    return [_device_to_response(d) for d in devices]
+    mask = is_demo_viewer(current_user) and can_cross_tenant_read(current_user)
+    return [_device_to_response(d, mask=mask) for d in devices]
 
 
 @router.get("/{device_id}", response_model=DeviceResponse)
@@ -195,21 +210,22 @@ async def get_device(
             detail="Device not found",
         )
 
-    # Check organization access
-    if current_user.org_id and device.org_id != current_user.org_id:
+    # Check organization access (platform staff can read cross-tenant)
+    if (not can_cross_tenant_read(current_user)) and current_user.org_id and device.org_id != current_user.org_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this device",
         )
 
-    return _device_to_response(device)
+    mask = is_demo_viewer(current_user) and can_cross_tenant_read(current_user)
+    return _device_to_response(device, mask=mask)
 
 
 @router.post("", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED)
 async def create_device(
     device_data: DeviceCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_operator)],
+    current_user: Annotated[User, Depends(require_superadmin)],
 ) -> DeviceResponse:
     """Create a new device. Non-superadmin users can only create devices in their own org."""
     import structlog
@@ -292,7 +308,7 @@ async def update_device(
     device_id: UUID,
     device_data: DeviceCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_operator)],
+    current_user: Annotated[User, Depends(require_superadmin)],
 ) -> DeviceResponse:
     """Update an existing device. Users can only update devices in their organization."""
     result = await db.execute(select(Device).where(Device.id == device_id))
@@ -345,12 +361,12 @@ async def update_device(
     return _device_to_response(device)
 
 
-@router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_device(
     device_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_operator)],
-) -> None:
+    current_user: Annotated[User, Depends(require_superadmin)],
+):
     """Delete a device. Users can only delete devices in their organization."""
     result = await db.execute(select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()

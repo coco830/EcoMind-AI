@@ -14,10 +14,10 @@ from sqlalchemy import select
 
 from app.protocols.parser import HJ212Parser
 from app.protocols.models import ParserConfig, ParsedData
-from app.db.tdengine_client import get_tdengine_client
 from app.db.postgres import AsyncSessionLocal
 from app.models.device import Device
 from app.services.alarm_service import check_thresholds_and_create_alarms
+from app.services.monitoring_service import MonitoringService
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +56,7 @@ class TCPGatewayServer:
         )
         self.parser = HJ212Parser(self.parser_config)
 
-        # TDengine client
-        self.tdengine_client = get_tdengine_client()
-
-        # Server state
+        # Server state (已迁移到 MySQL，移除 TDengine client)
         self.server: Optional[asyncio.Server] = None
         self.active_connections: Set[asyncio.Task] = set()
         self.running = False
@@ -77,9 +74,7 @@ class TCPGatewayServer:
     async def start(self):
         """Start the TCP server"""
         try:
-            # Initialize TDengine
-            await self.tdengine_client.connect()
-            await self.tdengine_client.init_database()
+            # 数据存储已迁移到 MySQL，无需初始化 TDengine
 
             # Start TCP server
             self.server = await asyncio.start_server(
@@ -117,8 +112,7 @@ class TCPGatewayServer:
         if self.active_connections:
             await asyncio.gather(*self.active_connections, return_exceptions=True)
 
-        # Close TDengine connection
-        await self.tdengine_client.close()
+        # 数据存储已迁移到 MySQL，无需关闭 TDengine 连接
 
         logger.info("TCP Gateway Server stopped")
 
@@ -243,33 +237,43 @@ class TCPGatewayServer:
             # Lookup device from PostgreSQL for threshold configuration
             device = await self._get_device_by_mn(device_id)
 
-            # Store each parameter
+            # 使用 MySQL MonitoringService 存储数据
             stored_count = 0
             alarm_count = 0
-            for param_code, param_value in parsed_data.parameters.items():
-                if param_code == "DataTime":
-                    continue
 
-                # Skip if no real-time value
-                if param_value.rtd is None:
-                    continue
+            async with AsyncSessionLocal() as db_session:
+                service = MonitoringService(db_session)
 
-                # Store to TDengine
-                success = await self.tdengine_client.insert_monitoring_data(
-                    device_id=device_id,
-                    pollutant_code=param_code,
-                    org_id=org_id,
-                    timestamp=timestamp,
-                    value=param_value.rtd,
-                    flag=param_value.flag or "N",
-                    status=0 if param_value.flag == "N" else 1
-                )
+                # 构建批量插入数据
+                batch_data = []
+                for param_code, param_value in parsed_data.parameters.items():
+                    if param_code == "DataTime":
+                        continue
 
-                if success:
-                    stored_count += 1
+                    # Skip if no real-time value
+                    if param_value.rtd is None:
+                        continue
 
-                    # Check thresholds and create alarms if device config exists
-                    if device is not None:
+                    batch_data.append({
+                        "device_id": device_id,
+                        "org_id": org_id,
+                        "pollutant_code": param_code,
+                        "ts": timestamp,
+                        "value": param_value.rtd,
+                        "flag": param_value.flag or "N",
+                        "status": 0 if param_value.flag == "N" else 1,
+                        "data_type": "realtime",
+                    })
+
+                # 批量插入到 MySQL
+                if batch_data:
+                    stored_count = await service.insert_batch_monitoring_data(batch_data)
+
+                # Check thresholds and create alarms if device config exists
+                if device is not None:
+                    for param_code, param_value in parsed_data.parameters.items():
+                        if param_code == "DataTime" or param_value.rtd is None:
+                            continue
                         try:
                             alarms = await check_thresholds_and_create_alarms(
                                 device=device,
@@ -288,7 +292,7 @@ class TCPGatewayServer:
             return stored_count > 0
 
         except Exception as e:
-            logger.error(f"Failed to store data to TDengine: {e}")
+            logger.error(f"Failed to store data to MySQL: {e}")
             return False
 
     async def _get_device_by_mn(self, mn: str) -> Optional[Device]:

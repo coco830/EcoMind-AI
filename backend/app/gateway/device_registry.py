@@ -12,14 +12,12 @@ from uuid import UUID
 
 import structlog
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
+from app.db.postgres import AsyncSessionLocal
 from app.models.device import Device
 
 logger = structlog.get_logger()
-settings = get_settings()
 
 
 @dataclass
@@ -50,39 +48,11 @@ class DeviceRegistry:
         """
         self._cache: dict[str, DeviceInfo] = {}
         self._cache_ttl = timedelta(seconds=cache_ttl_seconds)
-        self._engine = None
-        self._session_factory = None
-        self._lock = asyncio.Lock()
-        self._initialized = False
-
-    async def _ensure_initialized(self) -> None:
-        """Ensure database connection is initialized."""
-        if self._initialized:
-            return
-
-        async with self._lock:
-            if self._initialized:
-                return
-
-            self._engine = create_async_engine(
-                settings.database_url,
-                echo=False,
-                pool_pre_ping=True,
-            )
-            self._session_factory = sessionmaker(
-                self._engine,
-                class_=AsyncSession,
-                expire_on_commit=False,
-            )
-            self._initialized = True
-            logger.info("DeviceRegistry initialized")
+        logger.info("DeviceRegistry initialized (using shared db connection)")
 
     async def close(self) -> None:
-        """Close database connections."""
-        if self._engine:
-            await self._engine.dispose()
-            self._initialized = False
-            logger.info("DeviceRegistry closed")
+        """Close database connections (no-op, uses shared connection)."""
+        logger.info("DeviceRegistry closed")
 
     def _is_cache_valid(self, cached_info: DeviceInfo) -> bool:
         """Check if cached device info is still valid."""
@@ -107,11 +77,9 @@ class DeviceRegistry:
                 # Cache expired, remove it
                 del self._cache[mn]
 
-        # Query database
-        await self._ensure_initialized()
-
+        # Query database using shared session factory
         try:
-            async with self._session_factory() as session:
+            async with AsyncSessionLocal() as session:
                 result = await session.execute(
                     select(Device).where(Device.mn == mn)
                 )

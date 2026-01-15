@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 """Daily Report models for AI-generated device analysis reports."""
 
 from datetime import date, datetime
 from enum import Enum
+from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import Field
@@ -54,18 +57,18 @@ class DailyReport(Base):
     )
 
     # Report content
-    report_content: Mapped[str | None] = mapped_column(Text)
+    report_content: Mapped[Optional[str]] = mapped_column(Text)
 
     # Statistics snapshot (JSON string)
-    stats_snapshot: Mapped[str | None] = mapped_column(Text)
+    stats_snapshot: Mapped[Optional[str]] = mapped_column(Text)
 
     # Metadata
-    pollutant_count: Mapped[int | None] = mapped_column()
-    data_points: Mapped[int | None] = mapped_column()
-    domain: Mapped[str | None] = mapped_column(String(32))
+    pollutant_count: Mapped[Optional[int]] = mapped_column()
+    data_points: Mapped[Optional[int]] = mapped_column()
+    domain: Mapped[Optional[str]] = mapped_column(String(32))
 
     # Error info if failed
-    error_message: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -74,7 +77,7 @@ class DailyReport(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     device: Mapped["Device"] = relationship(back_populates="daily_reports")
@@ -94,15 +97,15 @@ class DailyReportResponse(BaseSchema):
     device_id: UUID
     report_date: date
     status: ReportStatus
-    report_content: str | None = None
-    stats_snapshot: str | None = None
-    pollutant_count: int | None = None
-    data_points: int | None = None
-    domain: str | None = None
-    error_message: str | None = None
+    report_content: Optional[str] = None
+    stats_snapshot: Optional[str] = None
+    pollutant_count: Optional[int] = None
+    data_points: Optional[int] = None
+    domain: Optional[str] = None
+    error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    generated_at: datetime | None = None
+    generated_at: Optional[datetime] = None
 
 
 # Import for type hints

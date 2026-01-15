@@ -58,6 +58,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Reports.vue')
       },
       {
+        path: 'self-inspection',
+        name: 'SelfInspection',
+        component: () => import('@/views/SelfInspection.vue')
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/Settings.vue')

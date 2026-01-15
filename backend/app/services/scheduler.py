@@ -12,6 +12,7 @@ from typing import Any
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -310,6 +311,22 @@ async def generate_daily_reports_job():
     return results
 
 
+async def monitor_device_health_job() -> dict[str, int]:
+    """定时任务：设备健康检查（离线检测 + 离线告警补齐）。"""
+    from app.services.device_health import sync_device_health
+
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await sync_device_health(db)
+            await db.commit()
+        if result.get("offline_status_updated") or result.get("offline_alarms_upserted"):
+            logger.info("Device health synced", **result)
+        return result
+    except Exception as e:
+        logger.error("Device health monitor failed", error=str(e))
+        return {"offline_status_updated": 0, "offline_alarms_upserted": 0}
+
+
 async def aggregate_monitoring_data_job():
     """定时任务：聚合昨日监测数据为每日统计。
 
@@ -393,6 +410,23 @@ def setup_scheduler(app=None):
     logger.info(
         "Scheduled daily reports job",
         schedule="Every day at 02:00 (Asia/Shanghai)",
+    )
+
+    # 设备健康检查：每 N 秒执行一次（默认 5 分钟），并在启动后立即运行一次
+    scheduler.add_job(
+        monitor_device_health_job,
+        IntervalTrigger(
+            seconds=int(settings.device_health_check_interval_seconds),
+            timezone="Asia/Shanghai",
+        ),
+        id="device_health_monitor_job",
+        name="Monitor Device Health (Offline + Alarms)",
+        replace_existing=True,
+        next_run_time=datetime.now(),  # run once immediately after scheduler starts
+    )
+    logger.info(
+        "Scheduled device health monitor job",
+        interval_seconds=int(settings.device_health_check_interval_seconds),
     )
 
     # 存储到 app.state（如果提供）

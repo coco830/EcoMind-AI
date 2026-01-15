@@ -11,6 +11,7 @@ import re
 import secrets
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -67,6 +68,20 @@ class Settings(BaseSettings):
     mysql_db: str = "ecomind"
     mysql_user: str = "root"
     mysql_password: str = ""
+
+    # Device health monitoring
+    # Consider device offline when last_heartbeat older than threshold (minutes)
+    device_offline_threshold_minutes: int = 10
+    # Grace window for newly created devices with no heartbeat yet (minutes)
+    device_offline_grace_minutes: int = 5
+    # Background health check interval (seconds)
+    device_health_check_interval_seconds: int = 300
+
+    # Bootstrap (default users)
+    # Ensure platform default accounts exist (idempotent). Can be disabled via env.
+    bootstrap_default_users: bool = True
+    # Reset passwords for default users on startup (DANGEROUS: will overwrite changed passwords)
+    bootstrap_default_users_reset_passwords: bool = False
 
     @field_validator("postgres_password")
     @classmethod
@@ -234,8 +249,17 @@ class Settings(BaseSettings):
     baidu_ocr_api_key: str = ""
     baidu_ocr_secret_key: str = ""
 
+    # Object Storage (Tencent Cloud COS / CloudBase Storage)
+    # Used to archive self-inspection report source files (PDF/images)
+    cos_secret_id: str = ""
+    cos_secret_key: str = ""
+    cos_session_token: str = ""  # optional (STS)
+    cos_region: str = ""  # e.g. ap-shanghai
+    cos_bucket: str = ""  # e.g. 7975-xxx-1304218020
+    cos_prefix: str = ""  # e.g. ecomind-ai/self_inspection/
+
     # CORS Configuration
-    allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"  # Comma-separated list
+    allowed_origins: str = "*"  # Allow all origins (configure properly in production via ALLOWED_ORIGINS env var)
 
     # Tencent Cloud SMS
     tencent_secret_id: str = ""
@@ -265,7 +289,39 @@ class Settings(BaseSettings):
         """Parse CORS allowed origins from environment variable."""
         if self.allowed_origins == "*":
             return ["*"]
-        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+        def _maybe_add_www_variants(origin: str) -> list[str]:
+            origin = origin.strip()
+            if not origin:
+                return []
+
+            parsed = urlparse(origin)
+            if not parsed.scheme or not parsed.netloc or not parsed.hostname:
+                return [origin]
+
+            host = parsed.hostname.lower()
+            # Don't generate www variants for localhost or IPs
+            if host in {"localhost", "127.0.0.1", "0.0.0.0"}:
+                return [origin]
+            if re.match(r"^\\d{1,3}(?:\\.\\d{1,3}){3}$", host):
+                return [origin]
+
+            port = f":{parsed.port}" if parsed.port else ""
+            if host.startswith("www."):
+                alt_host = host[4:]
+                if not alt_host:
+                    return [origin]
+                return [origin, f"{parsed.scheme}://{alt_host}{port}"]
+            return [origin, f"{parsed.scheme}://www.{host}{port}"]
+
+        origins: list[str] = []
+        seen: set[str] = set()
+        for raw in self.allowed_origins.split(","):
+            for o in _maybe_add_www_variants(raw):
+                if o and o not in seen:
+                    origins.append(o)
+                    seen.add(o)
+        return origins
 
 
 @lru_cache

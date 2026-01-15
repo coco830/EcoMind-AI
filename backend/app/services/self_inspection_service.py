@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 自检档案服务层
 
@@ -908,6 +910,9 @@ class AIReportGenerator:
         period: str,
         data_summary: dict[str, Any],
         trend_data: list[dict],
+        flow_data: dict[str, Any] | None = None,
+        online_data: dict[str, Any] | None = None,
+        calculate_pollutant_load: bool = False,
     ) -> dict[str, Any]:
         """
         生成AI运维报告
@@ -917,12 +922,22 @@ class AIReportGenerator:
             period: 报告周期（如"2024年1月"）
             data_summary: 数据统计摘要
             trend_data: 趋势数据
+            flow_data: 数采仪流量数据（可选，来自monitoring_data表）
+            online_data: 数采仪在线数据统计（可选，按指标汇总）
+            calculate_pollutant_load: 是否计算污染负荷
 
         Returns:
             AI生成的报告内容
         """
+        # 计算污染负荷（如果启用且有流量数据）
+        pollutant_loads = None
+        if calculate_pollutant_load and flow_data:
+            pollutant_loads = self._calculate_pollutant_loads(data_summary, flow_data)
+
         # 构建Prompt
-        prompt = self._build_report_prompt(org_name, period, data_summary, trend_data)
+        prompt = self._build_report_prompt(
+            org_name, period, data_summary, trend_data, flow_data, online_data, pollutant_loads
+        )
 
         # 调用AI生成
         messages = [{"role": "user", "content": prompt}]
@@ -934,7 +949,63 @@ class AIReportGenerator:
         full_response = "".join(response_chunks)
 
         # 解析AI响应
-        return self._parse_ai_response(full_response, period)
+        result = self._parse_ai_response(full_response, period)
+
+        # 添加污染负荷数据到结果
+        if pollutant_loads:
+            result["pollutant_loads"] = pollutant_loads
+
+        return result
+
+    def _calculate_pollutant_loads(
+        self,
+        data_summary: dict[str, Any],
+        flow_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        计算污染负荷（污染物浓度 × 流量）
+
+        Args:
+            data_summary: 检测数据统计（浓度数据，来自第三方检测报告）
+            flow_data: 流量统计数据（来自数采仪）
+
+        Returns:
+            各污染物的污染负荷数据
+        """
+        loads = {}
+
+        # 流量数据：平均流量(L/s) → 转换为 m³/day
+        avg_flow_ls = flow_data.get("avg_flow", 0)  # L/s
+        daily_volume_m3 = avg_flow_ls * 86400 / 1000  # m³/day
+
+        for code, stats in data_summary.items():
+            # 跳过流量本身和pH等无量纲参数
+            if code in ("w00000", "w01001"):
+                continue
+
+            avg_concentration = stats.get("avg", 0)  # mg/L
+            pollutant_name = stats.get("name", code)
+
+            # 污染负荷 = 浓度(mg/L) × 日流量(m³/day) / 1000 = kg/day
+            daily_load_kg = avg_concentration * daily_volume_m3 / 1000
+
+            loads[code] = {
+                "name": pollutant_name,
+                "avg_concentration_mg_l": round(avg_concentration, 3),
+                "daily_volume_m3": round(daily_volume_m3, 2),
+                "daily_load_kg": round(daily_load_kg, 4),
+                "monthly_load_kg": round(daily_load_kg * 30, 2),
+                "formula": "污染负荷(kg/d) = 浓度(mg/L) × 日流量(m³/d) ÷ 1000",
+            }
+
+        return {
+            "flow_source": "数采仪实测数据",
+            "concentration_source": "第三方检测报告",
+            "avg_flow_l_s": round(avg_flow_ls, 2),
+            "daily_volume_m3": round(daily_volume_m3, 2),
+            "pollutant_loads": loads,
+            "note": "污染负荷计算采用数采仪实测流量与第三方检测浓度数据",
+        }
 
     def _build_report_prompt(
         self,
@@ -942,6 +1013,9 @@ class AIReportGenerator:
         period: str,
         data_summary: dict[str, Any],
         trend_data: list[dict],
+        flow_data: dict[str, Any] | None = None,
+        online_data: dict[str, Any] | None = None,
+        pollutant_loads: dict[str, Any] | None = None,
     ) -> str:
         """构建报告生成Prompt"""
         # 格式化数据摘要
@@ -969,15 +1043,84 @@ class AIReportGenerator:
                     trend = "上升" if change > 5 else "下降" if change < -5 else "稳定"
                     trend_text.append(f"- {name}：{trend}趋势（变化率 {change:.1f}%）")
 
+        # 格式化流量数据（来自数采仪）
+        flow_text = ""
+        if flow_data:
+            flow_text = f"""
+## 实时流量数据（数采仪）
+- 数据来源：环境监测数采仪（实测数据，可信度高）
+- 平均流量：{flow_data.get('avg_flow', 0):.2f} L/s
+- 最大流量：{flow_data.get('max_flow', 0):.2f} L/s
+- 最小流量：{flow_data.get('min_flow', 0):.2f} L/s
+- 日总流量：{flow_data.get('total_volume', 0):.2f} m³
+"""
+
+        # 格式化在线监测指标统计（来自数采仪）
+        online_text = ""
+        if online_data and isinstance(online_data, dict):
+            pols = online_data.get("pollutants") or []
+            items = []
+            # 限制最多展示 20 个指标，避免 prompt 过长
+            for p in pols[:20]:
+                try:
+                    name = p.get("pollutant_name") or p.get("pollutant_code")
+                    unit = p.get("unit") or ""
+                    avg = p.get("avg")
+                    mn = p.get("min")
+                    mx = p.get("max")
+                    cnt = p.get("count")
+                    dev_cnt = p.get("device_count")
+                    if avg is None or mn is None or mx is None:
+                        continue
+                    items.append(
+                        f"- {name}：均值 {avg:.3f}{unit}，范围 {mn:.3f}-{mx:.3f}{unit}，点数 {cnt}，设备数 {dev_cnt}"
+                    )
+                except Exception:
+                    continue
+            if items:
+                online_text = f"""
+## 在线监测数据统计（数采仪）
+- 数据来源：环境监测数采仪（在线实测数据）
+- 说明：以下为企业范围内按指标汇总统计（不同设备/点位数据已合并）
+{chr(10).join(items)}
+"""
+
+        # 格式化污染负荷数据
+        load_text = ""
+        if pollutant_loads:
+            load_items = []
+            for code, load_info in pollutant_loads.get("pollutant_loads", {}).items():
+                load_items.append(
+                    f"- {load_info['name']}：日排放量 {load_info['daily_load_kg']:.4f} kg/d，"
+                    f"月排放量 {load_info['monthly_load_kg']:.2f} kg/月"
+                )
+            load_text = f"""
+## 污染负荷计算
+- 计算公式：污染负荷(kg/d) = 浓度(mg/L) × 日流量(m³/d) ÷ 1000
+- 流量数据来源：数采仪实测
+- 浓度数据来源：第三方检测报告
+{chr(10).join(load_items) if load_items else "暂无污染负荷数据"}
+"""
+
+        # 数据来源说明
+        data_source_note = """
+## 数据来源说明
+⚠️ 重要提示：
+- **流量数据**：来自环境监测数采仪，为设备实测数据，可信度高
+- **在线监测数据**：来自数采仪/在线监测系统（若有），可用于过程波动/异常识别
+- **浓度数据**：来自第三方检测机构报告，数据准确性以原始报告为准
+- 污染负荷计算整合了两个数据源，请注意数据来源差异
+""" if (flow_data or online_text) else ""
+
         prompt = f"""你是一位专业的环保运维专家。请根据以下企业自行检测数据，生成一份专业的运维分析报告。
 
 ## 企业信息
 - 企业名称：{org_name}
 - 报告周期：{period}
 
-## 数据统计摘要
+## 检测数据统计（第三方检测报告）
 {chr(10).join(summary_text) if summary_text else "暂无数据"}
-
+{flow_text}{online_text}{load_text}{data_source_note}
 ## 趋势分析
 {chr(10).join(trend_text) if trend_text else "数据点不足，无法分析趋势"}
 
@@ -986,12 +1129,14 @@ class AIReportGenerator:
 1. **数据概述**：简要总结本周期的监测数据情况
 2. **合规性分析**：分析各项指标是否达标，是否存在风险
 3. **趋势分析**：分析各污染物的变化趋势
-4. **运维建议**：提供3-5条具体可行的运维建议
+{"4. **污染负荷分析**：分析污染物排放总量及其环境影响" if pollutant_loads else ""}
+{"5" if pollutant_loads else "4"}. **运维建议**：提供3-5条具体可行的运维建议
 
 注意：
 - 语言专业但易懂
 - 建议要具体可操作
 - 如果数据不足，请如实说明
+- 注意区分数据来源（数采仪在线数据 vs 第三方检测报告），在分析中体现数据可信度差异，并可做交叉验证
 
 请直接输出报告内容，不要包含额外的解释。"""
 

@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 """Device models."""
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -132,14 +134,14 @@ class Device(Base):
         GUID, ForeignKey("organizations.id"), nullable=False
     )
     # 行业类型和执行标准
-    industry_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    national_standard: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    latitude: Mapped[float | None] = mapped_column(Float)
-    longitude: Mapped[float | None] = mapped_column(Float)
-    address: Mapped[str | None] = mapped_column(String(512))
-    pollutant_codes: Mapped[str | None] = mapped_column(String(512))  # Comma-separated
-    thresholds: Mapped[str | None] = mapped_column(Text)  # JSON string for threshold config
-    last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    industry_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    national_standard: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float)
+    longitude: Mapped[Optional[float]] = mapped_column(Float)
+    address: Mapped[Optional[str]] = mapped_column(String(512))
+    pollutant_codes: Mapped[Optional[str]] = mapped_column(String(512))  # Comma-separated
+    thresholds: Mapped[Optional[str]] = mapped_column(Text)  # JSON string for threshold config
+    last_heartbeat: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -170,7 +172,7 @@ class ThresholdConfig(BaseModel):
     enabled: bool = Field(default=True, description="是否启用阈值检测")
     pollutants: list[PollutantThreshold] = Field(default_factory=list, description="各污染物阈值")
 
-    def get_threshold(self, pollutant_code: str, include_disabled: bool = False) -> PollutantThreshold | None:
+    def get_threshold(self, pollutant_code: str, include_disabled: bool = False) -> Optional[PollutantThreshold]:
         """Get threshold for a specific pollutant."""
         for p in self.pollutants:
             if p.pollutant_code == pollutant_code:
@@ -187,14 +189,14 @@ class DeviceCreate(BaseSchema):
     mn: str = Field(..., min_length=1, max_length=24)
     name: str = Field(..., min_length=1, max_length=128)
     device_type: DeviceType
-    org_id: UUID | None = Field(None, description="组织ID，如不提供则使用当前用户的组织")
-    industry_type: IndustryType | None = Field(None, description="行业类型")
-    national_standard: str | None = Field(None, max_length=128, description="执行标准号，如 GB 18918-2002")
-    latitude: float | None = Field(None, ge=-90, le=90)
-    longitude: float | None = Field(None, ge=-180, le=180)
-    address: str | None = Field(None, max_length=512)
-    pollutant_codes: list[str] | None = None
-    thresholds: ThresholdConfig | None = Field(None, description="阈值配置")
+    org_id: Optional[UUID] = Field(None, description="组织ID，如不提供则使用当前用户的组织")
+    industry_type: Optional[IndustryType] = Field(None, description="行业类型")
+    national_standard: Optional[str] = Field(None, max_length=128, description="执行标准号，如 GB 18918-2002")
+    latitude: Optional[float] = Field(None, ge=-90, le=90)
+    longitude: Optional[float] = Field(None, ge=-180, le=180)
+    address: Optional[str] = Field(None, max_length=512)
+    pollutant_codes: Optional[list[str]] = None
+    thresholds: Optional[ThresholdConfig] = Field(None, description="阈值配置")
 
 
 class DeviceResponse(BaseSchema):
@@ -206,16 +208,16 @@ class DeviceResponse(BaseSchema):
     device_type: DeviceType
     status: DeviceStatus
     org_id: UUID
-    industry_type: IndustryType | None = None
-    national_standard: str | None = None
-    latitude: float | None = None
-    longitude: float | None = None
-    address: str | None = None
-    pollutant_codes: list[str] | None = None
-    thresholds: ThresholdConfig | None = None
-    last_heartbeat: datetime | None = None
+    industry_type: Optional[IndustryType] = None
+    national_standard: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    address: Optional[str] = None
+    pollutant_codes: Optional[list[str]] = None
+    thresholds: Optional[ThresholdConfig] = None
+    last_heartbeat: Optional[datetime] = None
     created_at: datetime
-    updated_at: datetime | None = None
+    updated_at: Optional[datetime] = None
 
 
 # Import for type hints

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Centralized Alarm Service for creating and managing alarms.
 
 This service provides a unified interface for:
@@ -443,6 +445,11 @@ class AlarmService:
         """
         session = await self._get_session()
         try:
+            # Create alarm message (used for both create and update)
+            message = f"设备 {device_mn} 已离线"
+            if last_heartbeat:
+                message += f"，最后心跳时间: {last_heartbeat.strftime('%Y-%m-%d %H:%M:%S')}"
+
             active_alarm = await self._find_active_alarm(
                 session, device_id, AlarmType.OFFLINE, None
             )
@@ -454,11 +461,6 @@ class AlarmService:
                 session, device_id, AlarmType.OFFLINE, None
             ):
                 return None
-
-            # Create alarm message
-            message = f"设备 {device_mn} 已离线"
-            if last_heartbeat:
-                message += f"，最后心跳时间: {last_heartbeat.strftime('%Y-%m-%d %H:%M:%S')}"
 
             alarm = Alarm(
                 device_id=device_id,
@@ -486,6 +488,36 @@ class AlarmService:
             logger.error("Failed to create offline alarm", error=str(e))
             await session.rollback()
             return None
+        finally:
+            await self._close_session(session)
+
+    async def resolve_device_offline_alarms(
+        self,
+        device_id: UUID,
+        *,
+        resolved_at: datetime | None = None,
+    ) -> int:
+        """Resolve all active offline alarms for a device."""
+        from sqlalchemy import update
+
+        session = await self._get_session()
+        try:
+            ts = resolved_at or datetime.utcnow()
+            result = await session.execute(
+                update(Alarm)
+                .where(
+                    Alarm.device_id == device_id,
+                    Alarm.alarm_type == AlarmType.OFFLINE.value,
+                    Alarm.status != AlarmStatus.RESOLVED.value,
+                )
+                .values(status=AlarmStatus.RESOLVED.value, resolved_at=ts, updated_at=ts)
+            )
+            await session.commit()
+            return int(getattr(result, "rowcount", 0) or 0)
+        except Exception as e:
+            logger.error("Failed to resolve offline alarms", error=str(e))
+            await session.rollback()
+            return 0
         finally:
             await self._close_session(session)
 

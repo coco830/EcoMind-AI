@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 """HJ 212-2017/2025 Protocol Parser.
 
 HJ 212 is China's environmental monitoring data transmission standard.
-Packet format: ##DataLen=nnnn;Data;CRC\\r\\n
+标准数据包格式: ##DataLenDataCRC\r\n
+例如: ##0130QN=20251207145051148;ST=32;CN=2011;PW=123456;MN=125301024WHYY1;Flag=4;CP=&&DataTime=20251207145000;...&&ABCD\r\n
 """
 
 import re
@@ -53,20 +56,15 @@ class HJ212Packet:
 class HJ212Parser:
     """Parser for HJ 212 protocol packets."""
 
-    # Packet pattern: ##DataLen=nnnn;Data;CRC\r\n
-    PACKET_PATTERN = re.compile(
-        r"##(\d{4});([^;]+);([A-Fa-f0-9]{4})\r?\n?"
-    )
-
-    # Field patterns
+    # Field patterns - 用于从数据内容中提取各字段
     FIELD_PATTERNS = {
         "QN": re.compile(r"QN=(\d{17})"),
         "ST": re.compile(r"ST=(\d{2})"),
         "CN": re.compile(r"CN=(\d{4})"),
         "PW": re.compile(r"PW=(\w+)"),
-        "MN": re.compile(r"MN=(\w+)"),
+        "MN": re.compile(r"MN=([\w-]+)"),  # MN可能包含字母数字和连字符
         "Flag": re.compile(r"Flag=(\d+)"),
-        "CP": re.compile(r"CP=&&(.+?)&&", re.DOTALL),
+        "CP": re.compile(r"CP=&&(.*?)&&", re.DOTALL),  # 使用 * 允许空内容
     }
 
     # CP field patterns for pollutant data
@@ -80,42 +78,69 @@ class HJ212Parser:
         pass
 
     def parse(self, data: bytes | str) -> HJ212Packet | None:
-        """Parse HJ 212 packet from raw data."""
+        """Parse HJ 212 packet from raw data.
+
+        HJ212 标准格式: ##DataLenDataCRC\r\n
+        - ## 起始符
+        - DataLen 4位数字，表示Data部分的字节长度
+        - Data 数据内容
+        - CRC 4位十六进制校验码
+        - \r\n 结束符
+        """
         if isinstance(data, bytes):
             try:
                 data = data.decode("utf-8")
             except UnicodeDecodeError:
-                # Try GB2312 encoding
                 try:
                     data = data.decode("gb2312")
                 except UnicodeDecodeError:
                     return None
 
-        match = self.PACKET_PATTERN.search(data)
-        if not match:
+        # 查找 ## 起始符
+        start_idx = data.find("##")
+        if start_idx == -1:
             return None
 
-        data_len = int(match.group(1))
-        raw_data = match.group(2)
-        crc = match.group(3)
+        # 从 ## 后提取4位数据长度
+        len_start = start_idx + 2
+        if len(data) < len_start + 4:
+            return None
 
-        # Verify data length
-        if len(raw_data) != data_len:
-            pass  # Log warning but continue parsing
+        try:
+            data_len = int(data[len_start:len_start + 4])
+        except ValueError:
+            return None
 
-        # Verify CRC
-        if not self._verify_crc(raw_data, crc):
-            pass  # Log warning but continue parsing
+        # 数据内容起始位置
+        data_start = len_start + 4
 
+        # 数据内容 (长度为 data_len)
+        if len(data) < data_start + data_len:
+            # 数据不完整，尝试宽松解析
+            raw_data = data[data_start:]
+        else:
+            raw_data = data[data_start:data_start + data_len]
+
+        # CRC 在数据内容之后 (4位十六进制)
+        crc_start = data_start + data_len
+        if len(data) >= crc_start + 4:
+            crc = data[crc_start:crc_start + 4]
+        else:
+            crc = ""
+
+        # 创建数据包对象
         packet = HJ212Packet(raw_data=raw_data, crc=crc)
 
-        # Extract fields
+        # 提取各字段
         for field_name, pattern in self.FIELD_PATTERNS.items():
             field_match = pattern.search(raw_data)
             if field_match:
                 value = field_match.group(1)
                 if field_name == "Flag":
-                    setattr(packet, field_name.lower(), int(value))
+                    try:
+                        setattr(packet, field_name.lower(), int(value))
+                    except ValueError:
+                        setattr(packet, field_name.lower(), 0)
                 elif field_name == "CP":
                     packet.cp = self._parse_cp(value)
                 else:
@@ -130,9 +155,12 @@ class HJ212Parser:
         # Parse DataTime if present
         datatime_match = re.search(r"DataTime=(\d{14})", cp_data)
         if datatime_match:
-            result["DataTime"] = datetime.strptime(
-                datatime_match.group(1), "%Y%m%d%H%M%S"
-            )
+            try:
+                result["DataTime"] = datetime.strptime(
+                    datatime_match.group(1), "%Y%m%d%H%M%S"
+                )
+            except ValueError:
+                pass
 
         # Parse pollutant data
         pollutants: dict[str, dict[str, Any]] = {}
@@ -206,5 +234,6 @@ class HJ212Parser:
         data_len = len(data)
         crc = self._calculate_crc(data.encode("utf-8"))
 
-        response = f"##{data_len:04d};{data};{crc}\r\n"
+        # HJ212 标准响应格式
+        response = f"##{data_len:04d}{data}{crc}\r\n"
         return response.encode("utf-8")

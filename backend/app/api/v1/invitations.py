@@ -23,9 +23,14 @@ from app.models.invitation import (
     InvitationCodeUpdate,
     InvitationStatus,
 )
-from app.models.organization import Organization
+from app.models.organization import Organization, OrganizationStatus
 from app.models.user import User
+from app.models.device import Device
+from app.models.self_inspection import SelfInspectionReport, SelfInspectionData
 from app.api.deps import get_current_active_user
+import structlog
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
@@ -293,18 +298,28 @@ async def update_invitation_code(
     return _invitation_to_response(invitation)
 
 
-@router.delete("/{code_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{code_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_invitation_code(
     code_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superadmin)],
-) -> None:
-    """Delete an invitation code.
+):
+    """删除邀请码并级联删除关联的所有数据。
 
-    Only superadmin can delete invitation codes.
+    级联删除顺序:
+    1. 删除关联企业的自检报告数据项 (SelfInspectionData)
+    2. 删除关联企业的自检报告 (SelfInspectionReport)
+    3. 删除关联企业的用户账号 (User)
+    4. 删除关联企业的设备 (Device)
+    5. 删除企业本身 (Organization)
+    6. 删除邀请码 (InvitationCode)
+
+    注意: 这是硬删除，数据不可恢复。
     """
     result = await db.execute(
-        select(InvitationCode).where(InvitationCode.id == code_id)
+        select(InvitationCode)
+        .options(selectinload(InvitationCode.organization))
+        .where(InvitationCode.id == code_id)
     )
     invitation = result.scalar_one_or_none()
 
@@ -314,7 +329,104 @@ async def delete_invitation_code(
             detail="Invitation code not found",
         )
 
-    await db.delete(invitation)
+    org = invitation.organization
+    org_id = org.id if org else None
+    org_name = org.name if org else "N/A"
+
+    try:
+        deleted_users: list[str] = []
+        deleted_devices: list[str] = []
+        deleted_reports = 0
+
+        # 级联删除关联数据
+        if org:
+            # 1. 删除自检报告数据项 (通过报告ID关联)
+            reports_result = await db.execute(
+                select(SelfInspectionReport).where(SelfInspectionReport.org_id == org_id)
+            )
+            reports = reports_result.scalars().all()
+            report_ids = [r.id for r in reports]
+
+            if report_ids:
+                # 删除数据项
+                data_result = await db.execute(
+                    select(SelfInspectionData).where(SelfInspectionData.report_id.in_(report_ids))
+                )
+                data_items = data_result.scalars().all()
+                for item in data_items:
+                    await db.delete(item)
+
+                # 2. 删除自检报告
+                for report in reports:
+                    await db.delete(report)
+
+                deleted_reports = len(report_ids)
+
+            # 3. 删除关联用户 (排除超级管理员自己)
+            users_result = await db.execute(
+                select(User).where(
+                    User.org_id == org_id,
+                    User.id != current_user.id  # 不要删除当前超级管理员
+                )
+            )
+            users = users_result.scalars().all()
+            for user in users:
+                deleted_users.append(user.username)
+                await db.delete(user)
+
+            # 4. 删除关联设备（保留历史监测数据用于数据沉淀）
+            devices_result = await db.execute(
+                select(Device).where(Device.org_id == org_id)
+            )
+            devices = devices_result.scalars().all()
+            for device in devices:
+                deleted_devices.append(device.mn)
+                # 注意：不删除监测数据（MonitoringDataMySQL, MonitoringDailyStats, MonitoringHourlyStats）
+                # 这些历史数据作为第三方服务企业的数据沉淀保留
+                await db.delete(device)
+
+            # 5. 删除企业
+            await db.delete(org)
+
+        # 6. 删除邀请码（必须与 org 同事务删除，避免外键约束）
+        await db.delete(invitation)
+
+        await db.commit()
+
+        if org:
+            logger.info(
+                "Organization cascade deleted",
+                org_id=str(org_id),
+                org_name=org_name,
+                deleted_users=deleted_users,
+                deleted_devices=deleted_devices,
+                deleted_reports=deleted_reports,
+                monitoring_data_preserved=True,  # 监测数据已保留
+                operator=current_user.username,
+            )
+
+        logger.info(
+            "Invitation code deleted",
+            code_id=str(code_id),
+            org_name=org_name,
+            operator=current_user.username,
+        )
+        return
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            "Failed to delete invitation code",
+            code_id=str(code_id),
+            org_name=org_name,
+            operator=current_user.username,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="删除邀请码失败，请稍后重试",
+        )
 
 
 @router.post("/{code_id}/regenerate", response_model=InvitationCodeResponse)

@@ -11,6 +11,8 @@ HJ 212-2017/2025 标准水质监测污染物定义库
 - format_value(): 根据精度格式化数值
 """
 
+from __future__ import annotations
+
 from typing import Any, TypedDict
 
 
