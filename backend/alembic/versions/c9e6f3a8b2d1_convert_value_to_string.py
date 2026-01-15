@@ -21,9 +21,29 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Convert value and standard_limit columns from Float to String.
 
-    This allows storing scientific notation values like "4.0×10²"
+    This allows storing scientific notation values like "4.0×102"
     for pollutants such as fecal coliform bacteria.
     """
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        inspector = sa.inspect(bind)
+        if "self_inspection_data" not in inspector.get_table_names():
+            return
+        with op.batch_alter_table("self_inspection_data") as batch_op:
+            batch_op.alter_column(
+                "value",
+                existing_type=sa.Float(),
+                type_=sa.String(64),
+                existing_nullable=False,
+            )
+            batch_op.alter_column(
+                "standard_limit",
+                existing_type=sa.Float(),
+                type_=sa.String(64),
+                existing_nullable=True,
+            )
+        return
+
     # Convert value column from FLOAT to VARCHAR(64)
     # First cast existing float values to string
     op.alter_column(
@@ -51,6 +71,26 @@ def downgrade() -> None:
 
     Note: This may fail if non-numeric values exist in the columns.
     """
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        inspector = sa.inspect(bind)
+        if "self_inspection_data" not in inspector.get_table_names():
+            return
+        with op.batch_alter_table("self_inspection_data") as batch_op:
+            batch_op.alter_column(
+                "value",
+                existing_type=sa.String(64),
+                type_=sa.Float(),
+                existing_nullable=False,
+            )
+            batch_op.alter_column(
+                "standard_limit",
+                existing_type=sa.String(64),
+                type_=sa.Float(),
+                existing_nullable=True,
+            )
+        return
+
     op.alter_column(
         'self_inspection_data',
         'value',

@@ -36,8 +36,16 @@ const superAdminMenuItems = [
   { path: '/invitations', icon: Ticket, title: '邀请码管理' }
 ]
 
+const regulatorMenuItems = [
+  { path: '/regulator', icon: HomeFilled, title: '监管驾驶舱' },
+  { path: '/regulator/reports', icon: Document, title: '监管报表' }
+]
+
 // 根据用户权限动态生成菜单
 const menuItems = computed(() => {
+  if (authStore.user?.role === 'regulator') {
+    return regulatorMenuItems
+  }
   if (authStore.user?.is_superadmin) {
     return [...baseMenuItems, ...superAdminMenuItems]
   }

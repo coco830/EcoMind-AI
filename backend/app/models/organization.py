@@ -8,7 +8,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import Field
-from sqlalchemy import String, DateTime, func
+from sqlalchemy import String, DateTime, func, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.postgres import Base, GUID
@@ -21,6 +21,13 @@ class OrganizationStatus(str, Enum):
     INACTIVE = "inactive"
 
 
+class OrganizationType(str, Enum):
+    """Organization type enum."""
+
+    ENTERPRISE = "enterprise"
+    REGULATOR = "regulator"
+
+
 class Organization(Base):
     """Organization ORM model."""
 
@@ -31,9 +38,19 @@ class Organization(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    org_type: Mapped[str] = mapped_column(
+        String(32), default=OrganizationType.ENTERPRISE.value, nullable=False
+    )
     address: Mapped[Optional[str]] = mapped_column(String(512))
     contact_name: Mapped[Optional[str]] = mapped_column(String(64))
     contact_phone: Mapped[Optional[str]] = mapped_column(String(20))
+    region_code: Mapped[Optional[str]] = mapped_column(String(64))
+    region_name: Mapped[Optional[str]] = mapped_column(String(128))
+    park_code: Mapped[Optional[str]] = mapped_column(String(64))
+    park_name: Mapped[Optional[str]] = mapped_column(String(128))
+    industry_type: Mapped[Optional[str]] = mapped_column(String(64))
+    jurisdiction_level: Mapped[Optional[str]] = mapped_column(String(32))
+    jurisdiction_codes: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
         String(20), default=OrganizationStatus.ACTIVE.value, nullable=False
     )
@@ -59,6 +76,14 @@ class OrganizationCreate(BaseSchema):
     address: Optional[str] = Field(None, max_length=512)
     contact_name: Optional[str] = Field(None, max_length=64)
     contact_phone: Optional[str] = Field(None, max_length=20)
+    org_type: OrganizationType = OrganizationType.ENTERPRISE
+    region_code: Optional[str] = Field(None, max_length=64)
+    region_name: Optional[str] = Field(None, max_length=128)
+    park_code: Optional[str] = Field(None, max_length=64)
+    park_name: Optional[str] = Field(None, max_length=128)
+    industry_type: Optional[str] = Field(None, max_length=64)
+    jurisdiction_level: Optional[str] = Field(None, max_length=32)
+    jurisdiction_codes: Optional[str] = Field(None, description="JSON string of jurisdiction codes")
 
 
 class OrganizationResponse(BaseSchema):
@@ -70,6 +95,14 @@ class OrganizationResponse(BaseSchema):
     address: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
+    org_type: str = OrganizationType.ENTERPRISE.value
+    region_code: Optional[str] = None
+    region_name: Optional[str] = None
+    park_code: Optional[str] = None
+    park_name: Optional[str] = None
+    industry_type: Optional[str] = None
+    jurisdiction_level: Optional[str] = None
+    jurisdiction_codes: Optional[str] = None
     status: str = OrganizationStatus.ACTIVE.value
     created_at: datetime
     updated_at: datetime

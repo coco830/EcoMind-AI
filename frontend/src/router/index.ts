@@ -72,6 +72,18 @@ const routes: RouteRecordRaw[] = [
         name: 'Invitations',
         component: () => import('@/views/Invitations.vue'),
         meta: { requiresSuperAdmin: true }
+      },
+      {
+        path: 'regulator',
+        name: 'RegulatorDashboard',
+        component: () => import('@/views/RegulatorDashboard.vue'),
+        meta: { requiresRegulator: true }
+      },
+      {
+        path: 'regulator/reports',
+        name: 'RegulatorReports',
+        component: () => import('@/views/RegulatorReports.vue'),
+        meta: { requiresRegulator: true }
       }
     ]
   },
@@ -104,8 +116,21 @@ router.beforeEach(async (to, _from, next) => {
   if (to.meta.requiresAuth !== false && !authStore.isAuthenticated) {
     next({ name: 'Login', query: { redirect: to.fullPath } })
   } else if ((to.name === 'Login' || to.name === 'Register' || to.name === 'ForgotPassword' || to.name === 'ResetPassword') && authStore.isAuthenticated) {
-    next({ name: 'Dashboard' })
+    next({ name: authStore.user?.role === 'regulator' ? 'RegulatorDashboard' : 'Dashboard' })
   } else {
+    const isRegulator = authStore.user?.role === 'regulator'
+    const isRegulatorRoute = to.path.startsWith('/regulator')
+
+    if (isRegulator && !isRegulatorRoute && to.meta.requiresAuth !== false) {
+      next({ name: 'RegulatorDashboard' })
+      return
+    }
+
+    if (!isRegulator && isRegulatorRoute) {
+      next({ name: 'Dashboard' })
+      return
+    }
+
     next()
   }
 })

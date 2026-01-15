@@ -10,13 +10,36 @@ const loading = ref(false)
 const invitations = ref<InvitationCode[]>([])
 
 // 创建对话框
+interface CreateInvitationForm {
+  name: string
+  description: string
+  max_uses: number
+  expires_at: string
+  org_type: string
+  region_code: string
+  region_name: string
+  park_code: string
+  park_name: string
+  industry_type: string
+  jurisdiction_level: string
+  jurisdiction_codes: string[]
+}
+
 const createDialogVisible = ref(false)
 const createLoading = ref(false)
-const createForm = ref<CreateInvitationRequest>({
+const createForm = ref<CreateInvitationForm>({
   name: '',
   description: '',
   max_uses: 1,
-  expires_at: ''
+  expires_at: '',
+  org_type: 'enterprise',
+  region_code: '',
+  region_name: '',
+  park_code: '',
+  park_name: '',
+  industry_type: '',
+  jurisdiction_level: '',
+  jurisdiction_codes: []
 })
 
 // 检查是否是超级管理员
@@ -40,7 +63,15 @@ const openCreateDialog = () => {
     name: '',
     description: '',
     max_uses: 1,
-    expires_at: ''
+    expires_at: '',
+    org_type: 'enterprise',
+    region_code: '',
+    region_name: '',
+    park_code: '',
+    park_name: '',
+    industry_type: '',
+    jurisdiction_level: '',
+    jurisdiction_codes: []
   }
   createDialogVisible.value = true
 }
@@ -56,13 +87,43 @@ const handleCreate = async () => {
   try {
     const data: CreateInvitationRequest = {
       name: createForm.value.name.trim(),
-      max_uses: createForm.value.max_uses || 1
+      max_uses: createForm.value.max_uses || 1,
+      org_type: createForm.value.org_type
     }
     if (createForm.value.description?.trim()) {
       data.description = createForm.value.description.trim()
     }
     if (createForm.value.expires_at) {
-      data.expires_at = new Date(createForm.value.expires_at).toISOString()
+      const expiresDate = new Date(createForm.value.expires_at)
+      const diffMs = expiresDate.getTime() - Date.now()
+      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+      if (diffDays > 0) {
+        data.expires_days = diffDays
+      }
+    }
+    if (createForm.value.region_code.trim()) {
+      data.region_code = createForm.value.region_code.trim()
+    }
+    if (createForm.value.region_name.trim()) {
+      data.region_name = createForm.value.region_name.trim()
+    }
+    if (createForm.value.park_code.trim()) {
+      data.park_code = createForm.value.park_code.trim()
+    }
+    if (createForm.value.park_name.trim()) {
+      data.park_name = createForm.value.park_name.trim()
+    }
+    if (createForm.value.industry_type.trim()) {
+      data.industry_type = createForm.value.industry_type.trim()
+    }
+    if (createForm.value.jurisdiction_level) {
+      data.jurisdiction_level = createForm.value.jurisdiction_level
+    }
+    if (createForm.value.jurisdiction_codes.length > 0) {
+      const codes = createForm.value.jurisdiction_codes.map(code => code.trim()).filter(Boolean)
+      if (codes.length > 0) {
+        data.jurisdiction_codes = codes
+      }
     }
 
     const result = await invitationsApi.create(data)
@@ -166,6 +227,18 @@ const getStatusText = (invitation: InvitationCode) => {
   return '未知'
 }
 
+const getOrgTypeLabel = (invitation: InvitationCode) => {
+  if (invitation.org_type === 'regulator') return '监管'
+  return '企业'
+}
+
+const formatJurisdiction = (invitation: InvitationCode) => {
+  if (invitation.org_type !== 'regulator') return '-'
+  const level = invitation.jurisdiction_level === 'park' ? '园区' : '区县'
+  const codes = invitation.jurisdiction_codes?.join(', ') || '-'
+  return `${level}: ${codes}`
+}
+
 onMounted(() => {
   if (isSuperAdmin.value) {
     loadInvitations()
@@ -221,7 +294,19 @@ onMounted(() => {
             </template>
           </el-table-column>
 
-          <el-table-column prop="name" label="企业名称" min-width="150" />
+          <el-table-column prop="name" label="组织名称" min-width="150" />
+
+          <el-table-column label="类型" width="90">
+            <template #default="{ row }">
+              {{ getOrgTypeLabel(row) }}
+            </template>
+          </el-table-column>
+
+          <el-table-column label="管辖范围" min-width="180">
+            <template #default="{ row }">
+              {{ formatJurisdiction(row) }}
+            </template>
+          </el-table-column>
 
           <el-table-column label="使用情况" width="120">
             <template #default="{ row }">
@@ -290,6 +375,13 @@ onMounted(() => {
         :close-on-click-modal="false"
       >
         <el-form :model="createForm" label-width="100px" label-position="left">
+          <el-form-item label="组织类型" required>
+            <el-select v-model="createForm.org_type" placeholder="选择类型" style="width: 100%">
+              <el-option label="企业" value="enterprise" />
+              <el-option label="监管部门" value="regulator" />
+            </el-select>
+          </el-form-item>
+
           <el-form-item label="企业名称" required>
             <el-input
               v-model="createForm.name"
@@ -306,6 +398,45 @@ onMounted(() => {
               placeholder="可选，备注信息"
               :rows="2"
               maxlength="500"
+            />
+          </el-form-item>
+
+          <el-form-item label="区域编码">
+            <el-input v-model="createForm.region_code" placeholder="如区县编码" />
+          </el-form-item>
+
+          <el-form-item label="区域名称">
+            <el-input v-model="createForm.region_name" placeholder="如区县名称" />
+          </el-form-item>
+
+          <el-form-item label="园区编码">
+            <el-input v-model="createForm.park_code" placeholder="如园区编码" />
+          </el-form-item>
+
+          <el-form-item label="园区名称">
+            <el-input v-model="createForm.park_name" placeholder="如园区名称" />
+          </el-form-item>
+
+          <el-form-item label="行业类型">
+            <el-input v-model="createForm.industry_type" placeholder="行业编码 (可选)" />
+          </el-form-item>
+
+          <el-form-item v-if="createForm.org_type === 'regulator'" label="管辖层级">
+            <el-select v-model="createForm.jurisdiction_level" placeholder="选择层级" style="width: 100%">
+              <el-option label="区县" value="district" />
+              <el-option label="园区" value="park" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item v-if="createForm.org_type === 'regulator'" label="管辖编码">
+            <el-select
+              v-model="createForm.jurisdiction_codes"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="输入并回车添加"
+              style="width: 100%"
             />
           </el-form-item>
 

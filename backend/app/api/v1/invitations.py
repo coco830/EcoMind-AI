@@ -7,6 +7,7 @@ Each invitation code is bound to a specific organization.
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
+import json
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -64,11 +65,27 @@ def generate_invitation_code(length: int = 12) -> str:
 
 def _invitation_to_response(invitation: InvitationCode) -> InvitationCodeResponse:
     """Convert InvitationCode ORM to response model with org_name."""
+    jurisdiction_codes = None
+    if invitation.jurisdiction_codes:
+        try:
+            parsed = json.loads(invitation.jurisdiction_codes)
+            if isinstance(parsed, list):
+                jurisdiction_codes = [str(v) for v in parsed]
+        except json.JSONDecodeError:
+            jurisdiction_codes = None
     return InvitationCodeResponse(
         id=invitation.id,
         code=invitation.code,
         name=invitation.name,
         description=invitation.description,
+        org_type=getattr(invitation, "org_type", None),
+        region_code=invitation.region_code,
+        region_name=invitation.region_name,
+        park_code=invitation.park_code,
+        park_name=invitation.park_name,
+        industry_type=invitation.industry_type,
+        jurisdiction_level=invitation.jurisdiction_level,
+        jurisdiction_codes=jurisdiction_codes,
         org_id=invitation.org_id,
         org_name=invitation.organization.name if invitation.organization else None,
         max_uses=invitation.max_uses,
@@ -107,6 +124,17 @@ async def create_invitation_code(
             detail="Failed to generate unique invitation code",
         )
 
+    org_type = (data.org_type or "enterprise").strip().lower()
+    if org_type not in {"enterprise", "regulator"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="无效的组织类型",
+        )
+
+    jurisdiction_codes_json = None
+    if data.jurisdiction_codes:
+        jurisdiction_codes_json = json.dumps(data.jurisdiction_codes, ensure_ascii=False)
+
     # Create organization for this invitation code
     org_code = f"ORG_{uuid4().hex[:8].upper()}"
     organization = Organization(
@@ -115,6 +143,14 @@ async def create_invitation_code(
         address="",
         contact_name="",
         contact_phone="",
+        org_type=org_type,
+        region_code=data.region_code,
+        region_name=data.region_name,
+        park_code=data.park_code,
+        park_name=data.park_name,
+        industry_type=data.industry_type,
+        jurisdiction_level=data.jurisdiction_level,
+        jurisdiction_codes=jurisdiction_codes_json,
     )
     db.add(organization)
     await db.flush()
@@ -134,6 +170,14 @@ async def create_invitation_code(
         max_uses=data.max_uses,
         expires_at=expires_at,
         created_by=current_user.id,
+        org_type=org_type,
+        region_code=data.region_code,
+        region_name=data.region_name,
+        park_code=data.park_code,
+        park_name=data.park_name,
+        industry_type=data.industry_type,
+        jurisdiction_level=data.jurisdiction_level,
+        jurisdiction_codes=jurisdiction_codes_json,
     )
 
     db.add(invitation)
@@ -291,6 +335,35 @@ async def update_invitation_code(
             invitation.status = InvitationStatus.USED.value
         else:
             invitation.status = InvitationStatus.ACTIVE.value
+    if data.region_code is not None:
+        invitation.region_code = data.region_code
+        if invitation.organization:
+            invitation.organization.region_code = data.region_code
+    if data.region_name is not None:
+        invitation.region_name = data.region_name
+        if invitation.organization:
+            invitation.organization.region_name = data.region_name
+    if data.park_code is not None:
+        invitation.park_code = data.park_code
+        if invitation.organization:
+            invitation.organization.park_code = data.park_code
+    if data.park_name is not None:
+        invitation.park_name = data.park_name
+        if invitation.organization:
+            invitation.organization.park_name = data.park_name
+    if data.industry_type is not None:
+        invitation.industry_type = data.industry_type
+        if invitation.organization:
+            invitation.organization.industry_type = data.industry_type
+    if data.jurisdiction_level is not None:
+        invitation.jurisdiction_level = data.jurisdiction_level
+        if invitation.organization:
+            invitation.organization.jurisdiction_level = data.jurisdiction_level
+    if data.jurisdiction_codes is not None:
+        encoded = json.dumps(data.jurisdiction_codes, ensure_ascii=False)
+        invitation.jurisdiction_codes = encoded
+        if invitation.organization:
+            invitation.organization.jurisdiction_codes = encoded
 
     await db.flush()
     await db.refresh(invitation)

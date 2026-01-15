@@ -174,9 +174,13 @@ async def register(
             detail="邮箱已被注册",
         )
 
-    # All publicly registered users start as viewers
-    # Role upgrades must be done by superadmin
+    # Assign role based on invitation org_type
+    # - enterprise: viewer (default)
+    # - regulator: regulator
+    invitation_org_type = getattr(invitation, "org_type", "enterprise")
     user_role = 'viewer'
+    if invitation_org_type == "regulator":
+        user_role = 'regulator'
 
     # Create user and add to the organization bound to the invitation code
     user = User(

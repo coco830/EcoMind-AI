@@ -19,6 +19,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        return
     # 创建原始监测数据表
     op.create_table(
         'monitoring_data',
@@ -99,6 +102,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        return
     op.drop_table('monitoring_hourly_stats')
     op.drop_table('monitoring_daily_stats')
     op.drop_table('monitoring_data')

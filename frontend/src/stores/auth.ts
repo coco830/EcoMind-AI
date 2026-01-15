@@ -14,6 +14,7 @@ export const useAuthStore = defineStore('auth', () => {
     user.value?.is_superadmin || user.value?.role === 'doc_editor'
   )
   const isViewer = computed(() => user.value?.role === 'viewer')
+  const isRegulator = computed(() => user.value?.role === 'regulator')
 
   // 功能权限
   const canEditDocuments = computed(() => isDocEditor.value)  // 可编辑文档数据
@@ -54,6 +55,7 @@ export const useAuthStore = defineStore('auth', () => {
     isSuperAdmin,
     isDocEditor,
     isViewer,
+    isRegulator,
     canEditDocuments,
     canDeleteDocuments,
     canManageInvitations,

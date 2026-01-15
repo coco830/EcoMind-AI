@@ -8,7 +8,7 @@ export interface InvitationCodeValidation {
   expires_at: string | null
 }
 
-export type UserRole = 'superadmin' | 'doc_editor' | 'viewer'
+export type UserRole = 'superadmin' | 'doc_editor' | 'viewer' | 'regulator'
 
 export interface User {
   id: string

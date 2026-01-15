@@ -27,6 +27,14 @@ class OrganizationUpdate(BaseModel):
     address: str | None = Field(None, max_length=512)
     contact_name: str | None = Field(None, max_length=64)
     contact_phone: str | None = Field(None, max_length=20)
+    org_type: str | None = Field(None, max_length=32)
+    region_code: str | None = Field(None, max_length=64)
+    region_name: str | None = Field(None, max_length=128)
+    park_code: str | None = Field(None, max_length=64)
+    park_name: str | None = Field(None, max_length=128)
+    industry_type: str | None = Field(None, max_length=64)
+    jurisdiction_level: str | None = Field(None, max_length=32)
+    jurisdiction_codes: str | None = Field(None, description="JSON string of jurisdiction codes")
 
 
 class OrganizationWithStats(OrganizationResponse):
@@ -170,6 +178,14 @@ async def create_organization(
         address=org_data.address,
         contact_name=org_data.contact_name,
         contact_phone=org_data.contact_phone,
+        org_type=org_data.org_type.value if hasattr(org_data.org_type, "value") else org_data.org_type,
+        region_code=org_data.region_code,
+        region_name=org_data.region_name,
+        park_code=org_data.park_code,
+        park_name=org_data.park_name,
+        industry_type=org_data.industry_type,
+        jurisdiction_level=org_data.jurisdiction_level,
+        jurisdiction_codes=org_data.jurisdiction_codes,
     )
     db.add(org)
     await db.flush()
@@ -204,6 +220,22 @@ async def update_organization(
         org.contact_name = org_data.contact_name
     if org_data.contact_phone is not None:
         org.contact_phone = org_data.contact_phone
+    if org_data.org_type is not None:
+        org.org_type = org_data.org_type
+    if org_data.region_code is not None:
+        org.region_code = org_data.region_code
+    if org_data.region_name is not None:
+        org.region_name = org_data.region_name
+    if org_data.park_code is not None:
+        org.park_code = org_data.park_code
+    if org_data.park_name is not None:
+        org.park_name = org_data.park_name
+    if org_data.industry_type is not None:
+        org.industry_type = org_data.industry_type
+    if org_data.jurisdiction_level is not None:
+        org.jurisdiction_level = org_data.jurisdiction_level
+    if org_data.jurisdiction_codes is not None:
+        org.jurisdiction_codes = org_data.jurisdiction_codes
 
     await db.flush()
     await db.refresh(org)

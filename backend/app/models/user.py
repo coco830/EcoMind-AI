@@ -23,11 +23,13 @@ class UserRole(str, Enum):
     - SUPERADMIN: 超级管理员（环保管家），拥有全部权限
     - DOC_EDITOR: 文档编辑（技术文案），可编辑文档数据，其他只读
     - VIEWER: 只读用户（销售），所有页面只读，用于演示
+    - REGULATOR: 监管用户（主管部门），仅可访问监管驾驶舱聚合数据
     """
 
     SUPERADMIN = "superadmin"      # 超级管理员 - 全部权限
     DOC_EDITOR = "doc_editor"      # 文档编辑 - 文档数据读写 + 其他只读
     VIEWER = "viewer"              # 只读用户 - 所有只读
+    REGULATOR = "regulator"        # 监管用户 - 仅监管端聚合数据
 
 
 class User(Base):

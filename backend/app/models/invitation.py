@@ -37,6 +37,14 @@ class InvitationCode(Base):
     # 邀请码信息
     name: Mapped[str] = mapped_column(String(100), nullable=False)  # 企业名称
     description: Mapped[Optional[str]] = mapped_column(Text)  # 备注说明
+    org_type: Mapped[str] = mapped_column(String(32), default="enterprise")
+    region_code: Mapped[Optional[str]] = mapped_column(String(64))
+    region_name: Mapped[Optional[str]] = mapped_column(String(128))
+    park_code: Mapped[Optional[str]] = mapped_column(String(64))
+    park_name: Mapped[Optional[str]] = mapped_column(String(128))
+    industry_type: Mapped[Optional[str]] = mapped_column(String(64))
+    jurisdiction_level: Mapped[Optional[str]] = mapped_column(String(32))
+    jurisdiction_codes: Mapped[Optional[str]] = mapped_column(Text)
 
     # 关联的组织 - 创建邀请码时自动创建对应组织
     org_id: Mapped[Optional[UUID]] = mapped_column(GUID, ForeignKey("organizations.id"))
@@ -73,6 +81,16 @@ class InvitationCodeCreate(BaseSchema):
     description: Optional[str] = Field(None, description="备注说明")
     max_uses: int = Field(1, ge=-1, description="最大使用次数，-1为无限")
     expires_days: Optional[int] = Field(None, ge=1, description="有效天数，不填则永不过期")
+    org_type: Optional[str] = Field("enterprise", description="组织类型: enterprise/regulator")
+    region_code: Optional[str] = Field(None, description="企业所属区域编码")
+    region_name: Optional[str] = Field(None, description="企业所属区域名称")
+    park_code: Optional[str] = Field(None, description="园区编码")
+    park_name: Optional[str] = Field(None, description="园区名称")
+    industry_type: Optional[str] = Field(None, description="行业类型编码")
+    jurisdiction_level: Optional[str] = Field(None, description="监管范围层级: district/park")
+    jurisdiction_codes: Optional[list[str]] = Field(
+        None, description="监管辖区代码列表"
+    )
 
 
 class InvitationCodeResponse(BaseSchema):
@@ -81,6 +99,14 @@ class InvitationCodeResponse(BaseSchema):
     code: str
     name: str
     description: Optional[str] = None
+    org_type: Optional[str] = None
+    region_code: Optional[str] = None
+    region_name: Optional[str] = None
+    park_code: Optional[str] = None
+    park_name: Optional[str] = None
+    industry_type: Optional[str] = None
+    jurisdiction_level: Optional[str] = None
+    jurisdiction_codes: Optional[list[str]] = None
     org_id: Optional[UUID] = None  # 关联的组织ID
     org_name: Optional[str] = None  # 组织名称（方便前端展示）
     max_uses: int
@@ -98,3 +124,10 @@ class InvitationCodeUpdate(BaseSchema):
     description: Optional[str] = None
     max_uses: Optional[int] = Field(None, ge=-1)
     is_active: Optional[bool] = None
+    region_code: Optional[str] = None
+    region_name: Optional[str] = None
+    park_code: Optional[str] = None
+    park_name: Optional[str] = None
+    industry_type: Optional[str] = None
+    jurisdiction_level: Optional[str] = None
+    jurisdiction_codes: Optional[list[str]] = None

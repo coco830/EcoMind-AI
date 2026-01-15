@@ -7,6 +7,16 @@ export interface InvitationCode {
   code: string
   name: string
   description: string | null
+  org_type?: string | null
+  region_code?: string | null
+  region_name?: string | null
+  park_code?: string | null
+  park_name?: string | null
+  industry_type?: string | null
+  jurisdiction_level?: string | null
+  jurisdiction_codes?: string[] | null
+  org_id?: string | null
+  org_name?: string | null
   max_uses: number
   used_count: number
   expires_at: string | null
@@ -21,15 +31,29 @@ export interface CreateInvitationRequest {
   name: string
   description?: string
   max_uses?: number
-  expires_at?: string
+  expires_days?: number
+  org_type?: string
+  region_code?: string
+  region_name?: string
+  park_code?: string
+  park_name?: string
+  industry_type?: string
+  jurisdiction_level?: string
+  jurisdiction_codes?: string[]
 }
 
 export interface UpdateInvitationRequest {
   name?: string
   description?: string
   max_uses?: number
-  expires_at?: string
   is_active?: boolean
+  region_code?: string
+  region_name?: string
+  park_code?: string
+  park_name?: string
+  industry_type?: string
+  jurisdiction_level?: string
+  jurisdiction_codes?: string[]
 }
 
 export const invitationsApi = {

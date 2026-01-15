@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.core.security import decode_access_token
 from app.db.postgres import get_db
 from app.models.user import User, UserRole
-from app.models.organization import Organization
+from app.models.organization import Organization, OrganizationType
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -180,5 +180,25 @@ async def require_org_membership(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User must belong to an organization",
+        )
+    return current_user
+
+
+async def require_regulator_access(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Require regulator role or superadmin."""
+    if current_user.is_superadmin:
+        return current_user
+    if current_user.role != UserRole.REGULATOR.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要监管权限",
+        )
+    org = getattr(current_user, "organization", None)
+    if org is None or getattr(org, "org_type", None) != OrganizationType.REGULATOR.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="监管组织配置异常",
         )
     return current_user

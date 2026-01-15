@@ -43,9 +43,19 @@ class IndustryType(str, Enum):
     THERMAL_POWER = "thermal_power"  # 火电厂
     PHARMACEUTICAL = "pharmaceutical"  # 制药工业
     PAPER_MAKING = "paper_making"  # 造纸工业
+    CHEMICAL = "chemical"  # 化工
+    FERTILIZER = "fertilizer"  # 化肥
+    COKING = "coking"  # 焦化
     PETROCHEMICAL = "petrochemical"  # 石油化工
     STEEL = "steel"  # 钢铁工业
+    NONFERROUS_METAL = "nonferrous_metal"  # 有色金属冶炼
     CEMENT = "cement"  # 水泥工业
+    GLASS_CERAMIC = "glass_ceramic"  # 玻璃/陶瓷
+    LEATHER = "leather"  # 皮革制品
+    FOOD_PROCESSING = "food_processing"  # 食品加工
+    HAZARDOUS_WASTE = "hazardous_waste"  # 危废/固废处置
+    MINING = "mining"  # 矿采/选矿
+    BUILDING_MATERIALS = "building_materials"  # 建材
     OTHER = "other"  # 其他（通用标准）
 
 
@@ -81,6 +91,21 @@ INDUSTRY_STANDARD_MAP: dict[str, dict[str, str]] = {
         "standard": "GB 3544-2008",
         "standard_name": "制浆造纸工业水污染物排放标准",
     },
+    "chemical": {
+        "name": "化工",
+        "standard": "GB 8978-1996",
+        "standard_name": "污水综合排放标准",
+    },
+    "fertilizer": {
+        "name": "化肥",
+        "standard": "GB 8978-1996",
+        "standard_name": "污水综合排放标准",
+    },
+    "coking": {
+        "name": "焦化",
+        "standard": "GB 16171-2012",
+        "standard_name": "炼焦化学工业污染物排放标准",
+    },
     "petrochemical": {
         "name": "石油化工",
         "standard": "GB 31571-2015",
@@ -91,10 +116,45 @@ INDUSTRY_STANDARD_MAP: dict[str, dict[str, str]] = {
         "standard": "GB 13456-2012",
         "standard_name": "钢铁工业水污染物排放标准",
     },
+    "nonferrous_metal": {
+        "name": "有色金属冶炼",
+        "standard": "GB 25467-2010",
+        "standard_name": "铜、镍、钴工业污染物排放标准",
+    },
     "cement": {
         "name": "水泥工业",
         "standard": "GB 4915-2013",
         "standard_name": "水泥工业大气污染物排放标准",
+    },
+    "glass_ceramic": {
+        "name": "玻璃/陶瓷",
+        "standard": "GB 26453-2011",
+        "standard_name": "平板玻璃工业污染物排放标准",
+    },
+    "leather": {
+        "name": "皮革制品",
+        "standard": "GB 30486-2013",
+        "standard_name": "制革及毛皮加工工业污染物排放标准",
+    },
+    "food_processing": {
+        "name": "食品加工",
+        "standard": "GB 8978-1996",
+        "standard_name": "污水综合排放标准",
+    },
+    "hazardous_waste": {
+        "name": "危废/固废处置",
+        "standard": "GB 18597-2023",
+        "standard_name": "危险废物贮存污染控制标准",
+    },
+    "mining": {
+        "name": "矿采/选矿",
+        "standard": "GB 8978-1996",
+        "standard_name": "污水综合排放标准",
+    },
+    "building_materials": {
+        "name": "建材",
+        "standard": "GB 8978-1996",
+        "standard_name": "污水综合排放标准",
     },
     "other": {
         "name": "其他",
