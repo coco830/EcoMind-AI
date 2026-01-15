@@ -16,14 +16,25 @@ export interface OrganizationWithStats extends Organization {
   device_count: number
 }
 
+export interface JurisdictionOption {
+  code: string
+  name: string | null
+  count: number
+}
+
 export const organizationApi = {
   // 获取组织列表（超管/平台员工可用；销售角色后端会做脱敏）
-  list(params?: { skip?: number; limit?: number }): Promise<Organization[]> {
-    return request.get('/organizations', { params })
+  list(params?: { skip?: number; limit?: number; only_invited?: boolean }): Promise<Organization[]> {
+    return request.get('/organizations', { params: { only_invited: true, ...params } })
   },
 
   // 获取单个组织详情（含统计）
   get(id: string): Promise<OrganizationWithStats> {
     return request.get(`/organizations/${id}`)
+  },
+
+  // 获取管辖编码选项（超管）
+  getScopes(params: { level: 'district' | 'park' }): Promise<JurisdictionOption[]> {
+    return request.get('/organizations/scopes', { params })
   }
 }

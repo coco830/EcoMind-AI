@@ -207,6 +207,9 @@ onBeforeUnmount(() => {
       </el-select>
       <el-button type="primary" :loading="loading" @click="fetchAll">刷新</el-button>
     </div>
+    <div class="filter-note">
+      数据延迟 T+1；风险分=0.4×超标率 + 0.2×无效率 + 0.2×离线率 + 0.2×报警率。
+    </div>
 
     <el-row :gutter="16" class="summary-row">
       <el-col :span="6">
@@ -250,6 +253,9 @@ onBeforeUnmount(() => {
             <div class="card-header">风险等级分布</div>
           </template>
           <div ref="riskChartRef" class="chart-box"></div>
+          <div class="risk-note">
+            L1 低(0-20) · L2 偏低(20-40) · L3 中(40-60) · L4 较高(60-80) · L5 高(80-100)
+          </div>
         </el-card>
         <el-card class="consistency-card">
           <template #header>
@@ -337,6 +343,11 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
+.filter-note {
+  font-size: 12px;
+  color: #6b7280;
+}
+
 .summary-row .el-card {
   border-radius: 12px;
 }
@@ -368,6 +379,13 @@ onBeforeUnmount(() => {
 
 .chart-box {
   height: 220px;
+}
+
+.risk-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
 }
 
 .consistency-card {

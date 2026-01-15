@@ -28,6 +28,14 @@ const riskColors: Record<string, string> = {
   L5: '#E85B5B'
 }
 
+const riskLegend = [
+  { level: 'L1', label: '低', range: '0-20' },
+  { level: 'L2', label: '偏低', range: '20-40' },
+  { level: 'L3', label: '中', range: '40-60' },
+  { level: 'L4', label: '较高', range: '60-80' },
+  { level: 'L5', label: '高', range: '80-100' }
+]
+
 const clearPolygons = () => {
   polygons.forEach(poly => poly.setMap(null))
   polygons = []
@@ -67,11 +75,17 @@ const initMap = async () => {
   }
 
   try {
+    ;(window as any)._AMapSecurityConfig = {
+      securityJsCode: amapSecurityCode
+    }
+
     AMap = await AMapLoader.load({
       key: amapKey,
       version: '2.0',
+      plugins: ['AMap.Scale'],
+      // AMapLoader typings omit securityJsCode; pass via cast to satisfy TS.
       securityJsCode: amapSecurityCode
-    })
+    } as any)
 
     map = new AMap.Map(mapContainer.value, {
       zoom: 10,
@@ -113,12 +127,13 @@ onBeforeUnmount(() => {
     </div>
     <div v-else class="map-container" ref="mapContainer"></div>
     <div v-if="!mapError && mapReady && cells.length === 0" class="no-data">
-      No data for current scope
+      当前范围暂无数据
     </div>
     <div class="map-legend">
-      <div class="legend-item" v-for="level in ['L1', 'L2', 'L3', 'L4', 'L5']" :key="level">
-        <span class="legend-color" :style="{ backgroundColor: riskColors[level] }"></span>
-        <span class="legend-label">{{ level }}</span>
+      <div class="legend-title">风险等级</div>
+      <div class="legend-item" v-for="item in riskLegend" :key="item.level">
+        <span class="legend-color" :style="{ backgroundColor: riskColors[item.level] }"></span>
+        <span class="legend-label">{{ item.level }} {{ item.label }} ({{ item.range }})</span>
       </div>
     </div>
   </div>
@@ -156,12 +171,19 @@ onBeforeUnmount(() => {
   bottom: 12px;
   left: 12px;
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 6px 10px;
   background: rgba(255, 255, 255, 0.9);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   z-index: 3;
+}
+
+.legend-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2937;
 }
 
 .legend-item {

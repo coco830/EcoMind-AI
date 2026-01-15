@@ -38,7 +38,7 @@ const superAdminMenuItems = [
 
 const regulatorMenuItems = [
   { path: '/regulator', icon: HomeFilled, title: '监管驾驶舱' },
-  { path: '/regulator/reports', icon: Document, title: '监管报表' }
+  { path: '/regulator/reports', icon: Document, title: '监管文档' }
 ]
 
 // 根据用户权限动态生成菜单
@@ -47,7 +47,7 @@ const menuItems = computed(() => {
     return regulatorMenuItems
   }
   if (authStore.user?.is_superadmin) {
-    return [...baseMenuItems, ...superAdminMenuItems]
+    return [...baseMenuItems, ...regulatorMenuItems, ...superAdminMenuItems]
   }
   return baseMenuItems
 })

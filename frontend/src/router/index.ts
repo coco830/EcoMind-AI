@@ -84,9 +84,15 @@ const routes: RouteRecordRaw[] = [
         name: 'RegulatorReports',
         component: () => import('@/views/RegulatorReports.vue'),
         meta: { requiresRegulator: true }
+      },
+      {
+        path: 'regulator/brief',
+        name: 'RegulatorBrief',
+        redirect: { name: 'RegulatorReports' },
+        meta: { requiresRegulator: true }
       }
-    ]
-  },
+      ]
+    },
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
@@ -118,15 +124,16 @@ router.beforeEach(async (to, _from, next) => {
   } else if ((to.name === 'Login' || to.name === 'Register' || to.name === 'ForgotPassword' || to.name === 'ResetPassword') && authStore.isAuthenticated) {
     next({ name: authStore.user?.role === 'regulator' ? 'RegulatorDashboard' : 'Dashboard' })
   } else {
-    const isRegulator = authStore.user?.role === 'regulator'
+    const isRegulatorRole = authStore.user?.role === 'regulator'
+    const isSuperAdmin = authStore.user?.is_superadmin === true
     const isRegulatorRoute = to.path.startsWith('/regulator')
 
-    if (isRegulator && !isRegulatorRoute && to.meta.requiresAuth !== false) {
+    if (isRegulatorRole && !isRegulatorRoute && to.meta.requiresAuth !== false) {
       next({ name: 'RegulatorDashboard' })
       return
     }
 
-    if (!isRegulator && isRegulatorRoute) {
+    if (!isRegulatorRole && !isSuperAdmin && isRegulatorRoute) {
       next({ name: 'Dashboard' })
       return
     }

@@ -1,0 +1,17 @@
+[Unit]
+Description=EcoMind-AI TCP to HTTP Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ecomind
+Environment=TCP_PORT=9999
+Environment=CLOUDBASE_API_URL=https://your-cloudbase-url.run.tcloudbase.com
+Environment=GATEWAY_API_KEY=ecomind-gateway-key-2024
+ExecStart=/usr/bin/python3 /opt/ecomind/tcp_to_http_proxy.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

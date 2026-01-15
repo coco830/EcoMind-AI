@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { invitationsApi, type InvitationCode, type CreateInvitationRequest } from '@/api/invitations'
+import { organizationApi, type JurisdictionOption } from '@/api/organizations'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, CopyDocument, Delete } from '@element-plus/icons-vue'
@@ -27,6 +28,8 @@ interface CreateInvitationForm {
 
 const createDialogVisible = ref(false)
 const createLoading = ref(false)
+const scopeOptions = ref<JurisdictionOption[]>([])
+const scopeLoading = ref(false)
 const createForm = ref<CreateInvitationForm>({
   name: '',
   description: '',
@@ -73,6 +76,8 @@ const openCreateDialog = () => {
     jurisdiction_level: '',
     jurisdiction_codes: []
   }
+  scopeOptions.value = []
+  scopeLoading.value = false
   createDialogVisible.value = true
 }
 
@@ -238,6 +243,53 @@ const formatJurisdiction = (invitation: InvitationCode) => {
   const codes = invitation.jurisdiction_codes?.join(', ') || '-'
   return `${level}: ${codes}`
 }
+
+const formatScopeOption = (option: JurisdictionOption) => {
+  if (option.name) return `${option.code} ${option.name}`
+  return option.code
+}
+
+const loadScopeOptions = async (level: string) => {
+  if (!level) {
+    scopeOptions.value = []
+    return
+  }
+
+  scopeLoading.value = true
+  try {
+    scopeOptions.value = await organizationApi.getScopes({
+      level: level === 'park' ? 'park' : 'district'
+    })
+  } catch (error: any) {
+    scopeOptions.value = []
+    ElMessage.error(error?.response?.data?.detail || '加载管辖编码失败')
+  } finally {
+    scopeLoading.value = false
+  }
+}
+
+watch(
+  () => createForm.value.org_type,
+  value => {
+    if (value !== 'regulator') {
+      createForm.value.jurisdiction_level = ''
+      createForm.value.jurisdiction_codes = []
+      scopeOptions.value = []
+    }
+  }
+)
+
+watch(
+  () => createForm.value.jurisdiction_level,
+  value => {
+    createForm.value.jurisdiction_codes = []
+    if (!value) {
+      scopeOptions.value = []
+      return
+    }
+    loadScopeOptions(value)
+  }
+)
 
 onMounted(() => {
   if (isSuperAdmin.value) {
@@ -435,9 +487,18 @@ onMounted(() => {
               filterable
               allow-create
               default-first-option
+              :loading="scopeLoading"
+              :disabled="!createForm.jurisdiction_level"
               placeholder="输入并回车添加"
               style="width: 100%"
-            />
+            >
+              <el-option
+                v-for="option in scopeOptions"
+                :key="option.code"
+                :label="formatScopeOption(option)"
+                :value="option.code"
+              />
+            </el-select>
           </el-form-item>
 
           <el-form-item label="可用次数">

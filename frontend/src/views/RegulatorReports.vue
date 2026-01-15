@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { regulatorApi } from '@/api/regulator'
+import RegulatorBrief from '@/views/RegulatorBrief.vue'
 
 const reportType = ref<'daily' | 'monthly'>('daily')
 const reportDate = ref<string>(getYesterday())
@@ -65,8 +66,10 @@ const handleDownload = async (format: 'excel' | 'pdf') => {
 </script>
 
 <template>
-  <div class="regulator-reports">
-    <el-card>
+  <div class="regulator-documents">
+    <div class="page-title">监管文档</div>
+    <RegulatorBrief />
+    <el-card class="report-card">
       <template #header>
         <div class="card-header">监管报表导出</div>
       </template>
@@ -123,10 +126,16 @@ const handleDownload = async (format: 'excel' | 'pdf') => {
 </template>
 
 <style scoped>
-.regulator-reports {
+.regulator-documents {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.page-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
 }
 
 .card-header {

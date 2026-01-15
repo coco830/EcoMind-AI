@@ -134,6 +134,21 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Return JSON error for unexpected exceptions to aid debugging."""
+    logger.exception(
+        "Unhandled exception",
+        path=request.url.path,
+        method=request.method,
+        error=str(exc),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+    )
+
+
 @app.get("/health")
 async def health_check() -> dict:
     """Health check endpoint."""
