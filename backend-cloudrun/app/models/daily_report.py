@@ -47,7 +47,7 @@ class DailyReport(Base):
         GUID, primary_key=True, default=uuid4
     )
     device_id: Mapped[UUID] = mapped_column(
-        GUID, ForeignKey("devices.id"), nullable=False
+        GUID, ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
     )
     report_date: Mapped[date] = mapped_column(
         Date, nullable=False, index=True

@@ -1,168 +1,311 @@
-📘 EcoMind-AI：下一代智慧环保SaaS平台项目文档
-> **适用对象**: AI 编程助手 (Cursor, Windsurf, Copilot), 开发团队
-> **项目版本**: v1.0.0 (MVP)
-> **核心标准**: HJ 212-2025 (SM4国密/工况/用电), HJ 212-2017
+# 📘 EcoMind-AI（当前实现版）
 
-## 1. 🎯 项目愿景与目标
-
-打造一个**轻硬件、重软件、AI驱动**的环保管家平台。不依赖特定硬件，通过纯软件手段实现对数采仪数据的深度挖掘。
-*   **数据层**: 兼容最新国标，实现“产（工况）+治（用电）+排（浓度）”三维数据同屏。
-*   **AI层**: 具备异常检测、反造假分析、趋势预测能力的智能中台。
-*   **应用层**: 提供**企业级、现代化**的 Web 管理端，而非简陋的 demo。
+> **定位**：智慧环保 SaaS 平台（数据采集、合规监控、AI 分析、智能体协同）  
+> **适用对象**：开发团队、AI 编程助手（Cursor / Copilot / Codex 等）  
+> **最后更新**：2026-04-07（已同步视频联动 Phase 1、Phase 2、P1 接入台账/安装验收、Demo 联调能力与企业接入清单）
 
 ---
 
-## 2. 🏗️ 技术架构选型 (Technical Stack)
+## 1) 项目概述
 
-为了兼顾**开发效率**（利用 Python 生态）和**交付质量**（成熟的前端交互），我们采用以下架构。**AI 在生成代码时必须严格遵守此选型。**
+EcoMind-AI 的核心目标是构建一个 **轻硬件、重软件、AI 驱动** 的环保运维平台：
 
-### 2.1 后端 (Backend) - Python Native
-*   **框架**: **FastAPI** (高性能、异步、自动生成文档)。
-*   **网络接入**: **asyncio + uvloop** (构建 TCP Gateway 处理 HJ212 报文)。
-*   **数据库**: **TDengine** (时序数据) + **PostgreSQL/SQLite** (业务数据/用户权限)。
-*   **加密**: **gmssl** (处理 HJ212-2025 的 SM4 解密)。
-*   **AI 引擎**: **Scikit-learn / XGBoost** (预测与异常检测) + **LangChain** (RAG 知识库)。
-
-### 2.2 前端 (Frontend) - 现代化单页应用
-*   *虽然团队主要熟悉 Python，但为了商业交付质量，前端交由 AI 生成标准的 Vue 3 代码。*
-*   **框架**: **Vue 3 (Composition API)** + **Vite**。
-*   **UI 组件库**: **Element Plus** (国内最成熟的 B 端组件库，符合环保行业审美)。
-*   **图表库**: **ECharts 5** (处理复杂的环保曲线、地图)。
-*   **状态管理**: **Pinia**。
+- **数据层**：兼容 HJ 212 协议采集链路，覆盖设备状态与监测数据
+- **分析层**：支持异常检测、趋势预测、日报诊断
+- **应用层**：企业管理端 + 监管聚合端 + 视频联动中心
+- **智能体层（新增）**：通过 `/openapi/*` 将核心能力开放给 OpenClaw 等 Agent 平台
 
 ---
 
-## 3. 🛠️ 核心功能模块与实现路径
+## 2) 今日状态（2026-04-07）
 
-### 模块 A: 泛在接入网关 (IoT Gateway)
-*   **职责**: 监听 TCP 端口，维持长连接，处理拆包/粘包，SM4 解密，协议解析。
-*   **难点**: 兼容 2017/2025 双标准。
-*   **逻辑**: 
-    1.  收到报文 -> 校验头部 `##`。
-    2.  提取 `Flag` -> 判断是否 SM4 加密。
-    3.  若加密 -> 调用 `gmssl` 解密 `CP` 段。
-    4.  解析 `CP` 段 -> 提取 `w`(污), `d`(电), `p`(工况) 参数。
-    5.  写入 TDengine。
+### ✅ Phase 1（API 适配层）已落地
 
-### 模块 B: AI 智能中台 (Intelligence Center)
-*   **职责**: 消费清洗后的数据，输出分析结果。
-*   **功能**:
-    *   **规则引擎**: 实时判断 `Flag=D/M/C`，标记无效数据。
-    *   **关联分析**: 周期性运行 XGBoost，输入（电流+流量），输出（理论浓度），计算偏差值。
-    *   **Copilot**: 基于 RAG 的问答接口，解释“为什么报警”。
+已完成：
 
-### 模块 C: 业务管理平台 (Web Dashboard)
-*   **职责**: 客户交互界面。
-*   **页面规划**:
-    *   **全景驾驶舱**: GIS 地图 + 实时报警滚动 + 关键指标卡片。
-    *   **数据查询**: 支持 `w/d/p` 多参数叠加对比的折线图（如：电流曲线和浓度曲线画在一起）。
-    *   **AI 诊断报告**: 展示 AI 生成的文字报告。
-    *   **设备管理**: 生成 MN 号，查看在线状态。
+1. 新增 `backend-cloudrun/app/api/openapi/` 路由模块
+2. 实现 6 个 Agent 工具接口（P0 + 报警确认）
+3. 实现 API Key 鉴权（`X-API-Key`）与工具权限控制
+4. 新增 API Key 管理接口（`/api/v1/api-keys`）
+5. 支持双模式 Key：`single_org`（企业隔离）/ `all_orgs`（全企业查询）
+6. 输出并维护智能体导入文档：
+   - `docs/openapi_agent_schema.json`
+   - `docs/openclaw_agent_prompt.md`
 
-### 模块 D: 监管驾驶舱 (Regulatory Console)
-*   **定位**: 面向地市级主管部门的**汇总监管视图**，展示辖区风险态势与治理成效，严格脱敏。
-*   **核心视图**:
-    *   **监管总览**: 企业数、在线率、超标企业数、风险等级分布。
-    *   **风险热力图**: 采用 **H3 网格聚合** + 行政区筛选，支持扩展到更大区域。
-    *   **风险趋势**: 30/90 天风险等级变化、离线率变化、异常标志占比变化。
-    *   **一致性分析**: 自检报告 vs 数采仪一致性等级分档 + 行业分布。
-    *   **环保管家排查**: 月度排查**脱敏汇总** + 监管报表导出。
-*   **约束**: 不展示企业级明细，仅展示聚合/等级/区间；行业样本阈值；T+1 时间延迟。
-*   **入口与权限**: 统一登录入口，通过**监管邀请码**注册后进入监管专属页面。
+### ✅ AI 接口增强（兜底机制）已落地
+
+- **预测接口兜底**：当请求污染物数据不足时，自动回退到该设备最近有数据的污染物
+- **报告接口兜底**：当目标日期无报告时，自动回退到最近可用的已完成日报
+- 响应内新增可解释字段，便于 Agent 透明告知用户（见第 6 节）
+
+### ✅ 视频联动第一阶段已落地
+
+已完成：
+
+1. 新增后端 `video` 业务域：视频通道、视频事件、汇总统计
+2. 提供 `/api/v1/video/*` JWT 接口，支持视频通道增删改查、事件登记、事件确认/解决
+3. 新增前端“视频联动”板块，集中管理通道配置与事件台账
+4. 在“设备管理”“告警管理”中新增深链入口，可按设备或告警上下文跳转视频联动中心
+5. 为后续接入 `GB/T28181 / RTSP / ONVIF / 外部 VMS` 预留了协议、接入方式和证据链接字段
+
+当前边界：
+
+- 本阶段管理的是**视频元数据、联动事件和证据地址**，不直接承载原始长视频存储
+- 原始视频流建议继续由企业侧 NVR / 视频平台承载，EcoMind-AI 负责联动、证据和 AI 上下文
+
+### ✅ 视频联动第二阶段（告警自动联动）已落地
+
+已完成：
+
+1. 阈值超标、AI异常、设备离线、Flag 异常告警创建后，自动生成关联的视频联动事件
+2. 人工创建告警后，同样自动生成视频联动事件
+3. 告警确认后，关联视频事件自动同步为“已确认”
+4. 告警解决后，关联视频事件自动同步为“已解决”
+5. 设备恢复在线时，离线告警被批量解决，对应视频事件也同步解决
+
+联动策略：
+
+- 若设备存在启用 `ai_enabled=true` 的视频通道，优先对这些通道生成联动事件
+- 若没有启用 AI 的通道，则回落到该设备下全部视频通道
+- 同一个告警在同一个视频通道上只生成一条关联事件，避免联动风暴
+
+### ✅ 视频联动 P1（视频接入台账 + 安装验收管理）已落地
+
+已完成：
+
+1. 在 `VideoChannel` 上新增建设生命周期字段：`待勘点 / 待安装 / 待联网 / 联调中 / 已验收 / 已投运`
+2. 新增接入准备与验收字段：网络承载、固定 IP、安装位置、勘点负责人、实施安装人、验收人、验收时间、验收说明
+3. `GET /api/v1/video/channels` 新增 `lifecycle_status` 过滤能力，可直接按项目交付阶段查看
+4. 前端 `VideoCenter` 升级为单页台账中心，可同时查看视频通道、安装验收信息和联动事件
+5. 汇总卡片增加待勘点、待安装、待联网、联调中、已验收/投运等项目交付指标
+
+适用场景：
+
+- 当前企业侧 **尚未提供 VMS / GB28181 / RTSP** 时，先将视频点位建设工作沉淀为平台内台账
+- 平台先承载“项目交付管理 + 证据联动管理”，后续再平滑接入真实视频流
+- `preview_url / playback_url` 可暂时为空，待企业视频平台具备后再补齐
+
+### ✅ 视频联动 Demo 联调能力已落地
+
+已完成：
+
+1. 新增 `POST /api/v1/video/demo/inject`，可为指定企业或设备一键生成演示视频台账
+2. 演示数据包含建设阶段、网络信息、验收字段、手工视频事件和告警联动事件
+3. 若当前企业下还没有设备，可自动补建演示设备，便于无真实流阶段先验证页面和流程
+4. 前端 `VideoCenter` 新增“导入演示数据”按钮，方便现场演示和联调准备
+
+适用场景：
+
+- 还没有企业真实视频流，但需要先验证 `页面 / 接口 / 权限 / 告警联动`
+- 需要给环保管家、实施方、业主方演示未来接入后的管理形态
+- 需要先把视频台账和验收流程跑顺，再等待企业侧接口准备完成
 
 ---
 
-## 4. 🤖 Rules for AI (AI 编程军规)
+## 3) 技术栈（当前实际）
 
-**这是本文档最重要的部分。请 AI 助手在生成代码时，必须逐条核对以下规则，严禁“放飞自我”。**
+### 后端
 
-### Rule 1: 协议解析严格化 (Protocol Strictness)
-*   **禁止**使用正则表达式解析复杂的嵌套报文，必须编写专用的 `Parser` 类。
-*   **必须**实现 CRC16 校验，校验失败直接丢弃或记录错误日志。
-*   **2025支持**: 必须在解析逻辑中预留 SM4 解密钩子。即使当前没有密钥，代码结构也要支持 `if encryption_enabled: decrypt()`。
-*   **字段映射**: 所有的参数编码（如 `w01001`, `d20101`）必须定义在独立的 `enums.py` 或 `mappings.py` 中，禁止在逻辑代码中写死（Hardcode）字符串。
+- FastAPI（异步 API）
+- SQLAlchemy Async（MySQL / SQLite）
+- slowapi（限流）
+- structlog（日志）
+- AI 预测：Prophet / NeuralProphet / 简单均值自动降级
+- AI 报告：日报缓存 + LLM 生成链路
+- 视频联动：Video Channel / Event 元数据建模 + 接入台账/安装验收管理 + 外部视频平台链接接入
 
-### Rule 2: 后端代码规范 (Backend Style)
-*   **Type Hinting**: 所有 Python 函数必须包含类型注解（Type Hints），通过 `mypy` 检查。
-*   **Pydantic**: 所有数据交互（API 请求/响应、数据库模型）必须使用 Pydantic Model 定义。
-*   **Async First**: 由于涉及 I/O（网络、数据库），所有 I/O 操作必须使用 `async/await`。
-*   **禁止引入重型框架**: 不要引入 Django，不要引入 Java/C# 依赖。保持 `requirements.txt` 精简。
+### 前端
 
-### Rule 3: 前端生成约束 (Frontend Constraints)
-*   **组件一致性**: 严禁混用 UI 库。所有按钮、表格、表单**只能**使用 `Element Plus`。
-*   **响应式布局**: 生成的页面必须适配 PC 端浏览器（1920x1080 及 1366x768）。
-*   **Mock Data**: 在后端 API 未通之前，前端代码必须包含 `mock` 数据生成逻辑，保证界面是可以预览和交互的。
-*   **ECharts 封装**: 不要把庞大的 ECharts 配置项写在 Vue 组件里，必须封装成独立的 Hook 或 Component（如 `useChart.js`）。
+- Vue 3 + Vite
+- Element Plus
+- ECharts
+- Pinia
 
-### Rule 4: 工程化结构 (Project Structure)
-AI 生成的文件结构必须严格遵循：
+---
+
+## 4) 目录结构（关键路径）
 
 ```text
-EcoMind/
-├── backend/                  # Python 后端
+EcoMind-AI/
+├── backend-cloudrun/
 │   ├── app/
-│   │   ├── core/             # 配置、安全、SM4算法
-│   │   ├── protocols/        # HJ212 解析器核心 (Parser, Enums)
-│   │   ├── gateway/          # TCP Server
-│   │   ├── models/           # Pydantic Models
-│   │   ├── api/              # FastAPI Routers
-│   │   └── services/         # 业务逻辑 (AI调用, DB操作)
-│   ├── main.py
-│   └── requirements.txt
-├── frontend/                 # Vue 3 前端
-│   ├── src/
-│   │   ├── api/              # Axios 封装
-│   │   ├── components/       # 公共组件 (Chart, Table)
-│   │   ├── views/            # 页面 (Dashboard, Report)
-│   │   └── stores/           # Pinia 状态
-│   └── package.json
-└── docker-compose.yml        # 一键启动 (Backend + Frontend + TDengine)
+│   │   ├── api/
+│   │   │   ├── v1/                    # 业务 API（JWT）
+│   │   │   │   └── video.py           # 视频联动接口
+│   │   │   └── openapi/               # Agent API（API Key）
+│   │   │       ├── router.py
+│   │   │       ├── auth.py
+│   │   │       ├── device_tools.py
+│   │   │       ├── data_tools.py
+│   │   │       ├── alarm_tools.py
+│   │   │       ├── ai_tools.py
+│   │   │       └── schemas.py
+│   │   ├── models/
+│   │   │   └── api_client.py          # API Key 客户端模型
+│   │   │   └── video.py               # 视频通道 / 事件模型
+│   │   ├── services/
+│   │   │   └── video_service.py       # 视频联动服务层
+│   │   └── main.py                    # 挂载 /api/v1 与 /openapi
+├── docs/
+│   ├── OPENCLAW_INTEGRATION_PROPOSAL.md
+│   ├── VIDEO_ENTERPRISE_ACCESS_CHECKLIST.md
+│   ├── openapi_agent_schema.json
+│   └── openclaw_agent_prompt.md
+└── frontend/
+    └── src/
+        ├── api/
+        │   └── video.ts               # 视频联动前端 API
+        └── views/
+            └── VideoCenter.vue        # 视频联动中心
 ```
 
 ---
 
-### Rule 5: 监管视图脱敏与聚合 (Regulator Privacy)
-*   **仅允许**访问聚合层接口，禁止返回企业级明细/设备级坐标/原始数值。
-*   **分档展示**: 风险等级为 5 档，数值输出为区间/等级，不给具体值。
-*   **样本阈值**: 低于行业阈值 N 时仅展示“样本不足”，不输出指标。
-*   **时间延迟**: 监管端数据默认 T+1。
+## 5) OpenAPI（Agent）接口总览
 
-## 5. 🚀 项目推进步骤 (Step-by-Step)
+基础前缀：`/openapi`  
+认证方式：Header `X-API-Key: ecomind_xxx`
 
-请 AI 按照以下顺序协助我进行开发：
+访问模式：
 
-### 第一阶段：协议核心 (The Protocol Core)
-1.  **任务**: 编写 `backend/app/protocols` 模块。
-2.  **输入**: HJ 212-2017 和 2025 的标准定义。
-3.  **输出**: 一个纯 Python 的解析器，能把 `QN=...&&...` 字符串转成 `{ "QN": "...", "Data": {...} }` 的字典，并支持 SM4 解密。
+- `single_org`：Key 绑定企业，接口默认查询该企业
+- `all_orgs`：Key 可查全部企业，但每次调用必须传 `enterprise_name` 或 `org_id`
 
-### 第二阶段：数据流转 (Data Pipeline)
-1.  **任务**: 编写 `backend/app/gateway` 和 `backend/app/db`。
-2.  **输入**: 模拟的数采仪报文发送工具。
-3.  **输出**: TCP Server 启动，接收报文，解析后存入 TDengine，并在控制台打印清洗后的数据。
+### 5.1 可用工具（当前 6 个）
 
-### 第三阶段：可视化 MVP (Frontend MVP)
-1.  **任务**: 初始化 Vue 3 项目，搭建“驾驶舱”框架。
-2.  **输入**: 想要展示的字段列表（如：排口名称、COD浓度、风机电流）。
-3.  **输出**: 一个漂亮的登录页 + 主页，包含一个 ECharts 实时动态折线图。
+1. `GET /openapi/device/status` → `get_device_status`
+2. `GET /openapi/data/latest` → `get_latest_data`
+3. `GET /openapi/alarm/active` → `get_active_alarms`
+4. `POST /openapi/alarm/acknowledge` → `acknowledge_alarm`
+5. `GET /openapi/ai/predict` → `get_ai_prediction`
+6. `GET /openapi/ai/report` → `get_ai_report`
 
-### 第四阶段：AI 注入 (AI Injection)
-1.  **任务**: 编写 `backend/app/services/ai_service.py`。
-2.  **输入**: 历史数据 CSV。
-3.  **输出**: 简单的异常检测算法上线，当前端查询数据时，返回的数据包含 `is_anomaly: true/false` 标记，前端标红显示。
+### 5.2 API Key 管理（平台后台）
+
+前缀：`/api/v1/api-keys`（需 superadmin JWT）
+
+- `POST /api/v1/api-keys`：创建 API Key
+- `GET /api/v1/api-keys`：查询 API Key 列表
+- `PATCH /api/v1/api-keys/{client_id}/toggle`：启用/禁用
+- `DELETE /api/v1/api-keys/{client_id}`：吊销
+
+创建 `all_orgs` Key 时建议：
+
+- `access_scope=all_orgs`
+- `permissions` 按最小化原则配置（仅开放确需工具）
+- 对调用日志做审计（查询企业、接口、时间、调用方）
 
 ---
 
-### 第五阶段：监管驾驶舱 (Regulatory Console)
-1.  **任务**: 设计监管驾驶舱信息架构与聚合指标。
-2.  **输入**: 监管端权限/隐私规则、行业字典、行政区边界（高德）。
-3.  **输出**: H3 网格聚合视图 + 风险等级分档 + 监管报表导出。
+## 5.3 视频联动板块（当前范围）
 
-## 6. 💡 提示词示例 (Prompt Examples)
+前端入口：
 
-**当你需要 AI 写解析器时：**
-> "作为 Python 专家，请根据 HJ 212-2025 标准，为我编写一个 `HJ212Parser` 类。要求：1. 使用 `gmssl` 处理可能的 SM4 加密；2. 提取 CP 段中的 `w` (水), `a` (气), `d` (电), `p` (工况) 参数；3. 输出 Pydantic 对象。请确保代码健壮性，处理 CRC 校验失败的情况。"
+- 左侧菜单新增：`视频联动`
+- `设备管理` 页新增“查看”入口，可按设备上下文跳转
+- `告警管理` 页新增“视频联动”入口，可按告警上下文跳转
 
-**当你需要 AI 写前端图表时：**
-> "作为 Vue 3 和 ECharts 专家，请为我写一个 `RealTimeLineChart.vue` 组件。要求：1. 使用 Element Plus 的 Card 包裹；2. 接收 `props` 传入的时间序列数据；3. 支持双 Y 轴，左轴显示污染物浓度，右轴显示工况电流值。请提供 Mock 数据以便我直接预览效果。"
+后端接口前缀：`/api/v1/video`
 
+已实现接口：
+
+- `GET /api/v1/video/summary`：视频联动汇总卡片
+- `GET /api/v1/video/channels`：查询视频通道（支持 `org_id / device_id / point_type / lifecycle_status / status / ai_enabled`）
+- `POST /api/v1/video/channels`：创建视频通道
+- `POST /api/v1/video/demo/inject`：导入演示视频台账、演示事件和联动告警
+- `PUT /api/v1/video/channels/{channel_id}`：更新视频通道
+- `DELETE /api/v1/video/channels/{channel_id}`：删除视频通道
+- `GET /api/v1/video/events`：查询视频事件
+- `POST /api/v1/video/events`：登记视频事件
+- `POST /api/v1/video/events/{event_id}/acknowledge`：确认视频事件
+- `POST /api/v1/video/events/{event_id}/resolve`：解决视频事件
+
+数据设计原则：
+
+- 视频通道绑定**一个监测设备**，同时保存 `device_id(UUID)` 与 `device_mn`
+- 视频通道除协议与链接字段外，还承担**接入准备、施工、联网、验收**台账
+- 视频事件既可独立登记，也可绑定 `related_alarm_id` 形成“告警 + 视频证据”闭环
+- 通道层保存协议、接入方式、生命周期、网络承载、安装位置、验收信息、预览/回放链接、AI 启用状态
+- 事件层保存截图地址、片段地址、事件标题、处置状态和附加元数据
+
+推荐使用方式：
+
+1. 在 `设备管理` 中为每个站房/排口建立视频通道台账，并先录入建设阶段
+2. 在 `视频联动` 中维护网络、机位、勘点、安装和验收信息，形成交付闭环
+3. 若暂无真实视频流，可先点击“导入演示数据”验证页面和接口流程
+4. 告警发生后，从 `告警管理` 跳转到 `视频联动`，登记或查看关联证据
+5. 后续接入外部视频平台回调时，将识别结果落入 `video_events`
+6. 再将 `video_events + alarms + monitoring_data` 一起送入 AI 诊断链路
+
+自动联动行为：
+
+- 平台告警服务会在告警创建成功后自动尝试生成 `AI_LINKAGE` 类型视频事件
+- 视频事件会记录 `related_alarm_id`，用于从告警页深链定位
+- 当告警状态变更时，相关视频事件状态会同步推进
+
+---
+
+## 6) AI 接口“自动回退”字段（重要）
+
+### 6.1 `get_ai_prediction` 回退字段
+
+当请求污染物数据不足时，系统会自动回退：
+
+- `used_fallback_pollutant`：是否回退
+- `requested_pollutant` / `requested_pollutant_code`：原请求污染物
+- `pollutant` / `pollutant_code`：实际用于预测的污染物
+- `attempted_pollutant_codes`：尝试顺序（可解释性）
+
+### 6.2 `get_ai_report` 回退字段
+
+当目标日期无可用报告时，系统会自动回退到最近可用报告：
+
+- `used_fallback_report`：是否回退
+- `requested_report_date`：请求日期
+- `actual_report_date`：实际命中日期
+- `fallback_reason`：回退原因说明
+- `report_date`：兼容字段（等同实际报告日期）
+
+> Agent 侧回答规范：如果 `used_fallback_* = true`，必须显式告知用户“已自动回退”。
+
+---
+
+## 7) 联调建议（OpenClaw）
+
+1. 创建 API Key（`/api/v1/api-keys`）
+2. 在 OpenClaw 导入 `docs/openapi_agent_schema.json`
+3. 粘贴 `docs/openclaw_agent_prompt.md` 到系统提示词
+4. 逐个测试 6 个工具（推荐顺序）：
+   - `get_device_status`
+   - `get_latest_data`
+   - `get_active_alarms`
+   - `get_ai_prediction`
+   - `get_ai_report`
+   - `acknowledge_alarm`
+5. 验证回退字段解释是否符合预期
+
+---
+
+## 8) 关键文档索引
+
+- 集成方案总文档：`docs/OPENCLAW_INTEGRATION_PROPOSAL.md`
+- OpenAPI 导入文件：`docs/openapi_agent_schema.json`
+- 智能体提示词模板：`docs/openclaw_agent_prompt.md`
+- 企业侧视频接入清单：`docs/VIDEO_ENTERPRISE_ACCESS_CHECKLIST.md`
+
+---
+
+## 9) 给后续 AI 的工作约束（精简版）
+
+1. **不破坏双 API 体系**：`/api/v1`（前端/JWT）与 `/openapi`（Agent/API Key）分层保持稳定
+2. **接口返回优先可解释性**：对 Agent 返回需包含摘要与业务语义，避免裸技术错误
+3. **多租户安全优先**：严格按 `org_id` 隔离数据
+4. **回退要透明**：触发回退必须有字段标识和可读说明
+5. **优先复用现有 Service 层**：避免在 OpenAPI 层复制业务逻辑
+
+---
+
+## 10) 下一步建议
+
+- Phase 2：完成 OpenClaw 端到端场景回归测试（巡检/预测/报警/报告）
+- Phase 3：逐步扩展 P1/P2 工具与主动推送能力（Webhook、企微、钉钉）

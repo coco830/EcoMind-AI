@@ -18,8 +18,10 @@ import {
   formatPollutantValue,
   generateGroupedPollutantOptions,
   getPollutantColor,
+  normalizePollutantCode,
   isHeavyMetal,
   COMMON_POLLUTANTS,
+  AIR_COMMON_POLLUTANTS,
   HEAVY_METAL_POLLUTANTS,
 } from '@/config/pollutants'
 
@@ -68,6 +70,7 @@ const groupedPollutantOptions = computed(() => generateGroupedPollutantOptions()
 const pollutantPresets = [
   { label: '设备实际', value: 'actual', codes: [], hasSubmenu: false },
   { label: '常用指标', value: 'common', codes: COMMON_POLLUTANTS, hasSubmenu: false },
+  { label: '大气常用', value: 'air_common', codes: AIR_COMMON_POLLUTANTS, hasSubmenu: false },
   {
     label: '重金属',
     value: 'heavy_metals',
@@ -105,6 +108,11 @@ const selectedDeviceName = computed(() => {
   const device = devices.value.find(d => d.mn === selectedDeviceForPrediction.value)
   return device?.name || selectedDeviceForPrediction.value
 })
+
+const getDefaultPresetValue = (device?: Device | null) => {
+  if (device?.device_type === 'air') return 'air_common'
+  return 'common'
+}
 
 // Filtered active pollutants
 const filteredActivePollutants = computed(() => {
@@ -166,10 +174,11 @@ const formatDateTime = (date: Date): string => {
 const groupedData = computed(() => {
   const groups: Record<string, MonitoringData[]> = {}
   for (const item of trendData.value) {
-    if (!groups[item.pollutant_code]) {
-      groups[item.pollutant_code] = []
+    const normalizedCode = normalizePollutantCode(item.pollutant_code)
+    if (!groups[normalizedCode]) {
+      groups[normalizedCode] = []
     }
-    groups[item.pollutant_code].push(item)
+    groups[normalizedCode].push({ ...item, pollutant_code: normalizedCode })
   }
   return groups
 })
@@ -191,6 +200,9 @@ const loadData = async () => {
     if (!selectedDeviceForPrediction.value && deviceList.length > 0) {
       selectedDeviceForPrediction.value = deviceList[0].mn
       parseDevicePollutants(deviceList[0])
+      if (selectedPreset.value !== 'actual' && selectedPreset.value !== 'heavy_metals') {
+        selectedPreset.value = getDefaultPresetValue(deviceList[0])
+      }
     }
 
     if (showActualDataOnly.value && selectedDeviceForPrediction.value) {
@@ -225,7 +237,8 @@ const parseDevicePollutants = (device: Device) => {
       }
     }
     if (codes.length > 0) {
-      activePollutants.value = codes.filter(c => POLLUTANT_MAP[c.toLowerCase()])
+      const normalizedCodes = [...new Set(codes.map(code => normalizePollutantCode(code)))]
+      activePollutants.value = normalizedCodes.filter(code => POLLUTANT_MAP[code])
     }
   }
 }
@@ -256,7 +269,7 @@ const updateLatestValues = (data: MonitoringData[]) => {
   const latest: Record<string, { value: number; flag: string; ts: string }> = {}
 
   for (const item of data) {
-    const code = item.pollutant_code
+    const code = normalizePollutantCode(item.pollutant_code)
     if (!latest[code] || new Date(item.ts) > new Date(latest[code].ts)) {
       latest[code] = {
         value: item.value,
@@ -277,15 +290,21 @@ const loadDevicePollutants = async () => {
     const data = await dashboardApi.getDevicePollutants(selectedDeviceForPrediction.value, 24)
 
     if (data.length > 0) {
-      const detectedCodes = data.map(item => item.pollutant_code)
-      activePollutants.value = detectedCodes
+      const detectedCodes = [...new Set(data.map(item => normalizePollutantCode(item.pollutant_code)))]
+      const knownDetectedCodes = detectedCodes.filter(code => POLLUTANT_MAP[code])
+      activePollutants.value = knownDetectedCodes.length > 0 ? knownDetectedCodes : detectedCodes
+      if (activePollutants.value.length > 0 && !activePollutants.value.includes(selectedPollutant.value)) {
+        selectedPollutant.value = activePollutants.value[0]
+      }
       updateLatestValues(data)
     } else {
-      activePollutants.value = COMMON_POLLUTANTS
+      const device = devices.value.find(d => d.mn === selectedDeviceForPrediction.value)
+      activePollutants.value = device?.device_type === 'air' ? AIR_COMMON_POLLUTANTS : COMMON_POLLUTANTS
     }
   } catch (e) {
     console.error('Failed to load device pollutants:', e)
-    activePollutants.value = COMMON_POLLUTANTS
+    const device = devices.value.find(d => d.mn === selectedDeviceForPrediction.value)
+    activePollutants.value = device?.device_type === 'air' ? AIR_COMMON_POLLUTANTS : COMMON_POLLUTANTS
   }
 }
 
@@ -314,10 +333,24 @@ const onDeviceChange = async () => {
   const device = devices.value.find(d => d.mn === selectedDeviceForPrediction.value)
   if (device) {
     parseDevicePollutants(device)
+    if (selectedPreset.value !== 'actual' && selectedPreset.value !== 'heavy_metals') {
+      const nextPreset = getDefaultPresetValue(device)
+      if (selectedPreset.value !== nextPreset) {
+        selectedPreset.value = nextPreset
+      }
+    }
   }
 
   if (showActualDataOnly.value) {
     await loadDevicePollutants()
+  } else {
+    const preset = pollutantPresets.find(p => p.value === selectedPreset.value)
+    if (preset) {
+      activePollutants.value = preset.codes
+      if (preset.codes.length > 0 && !preset.codes.includes(selectedPollutant.value)) {
+        selectedPollutant.value = preset.codes[0]
+      }
+    }
   }
 
   await refreshTrendAndPrediction()

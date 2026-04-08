@@ -59,7 +59,7 @@ class Alarm(Base):
         GUID, primary_key=True, default=uuid4
     )
     device_id: Mapped[UUID] = mapped_column(
-        GUID, ForeignKey("devices.id"), nullable=False
+        GUID, ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
     )
     alarm_type: Mapped[str] = mapped_column(String(32), nullable=False)
     level: Mapped[str] = mapped_column(String(32), default=AlarmLevel.WARNING.value)

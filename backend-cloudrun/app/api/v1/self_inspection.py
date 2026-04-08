@@ -3,15 +3,25 @@ from __future__ import annotations
 """Self-inspection report API endpoints - 自检档案API."""
 
 import io
+import json
 import os
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import quote
 from uuid import UUID, uuid4
+from xml.sax.saxutils import escape
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
@@ -20,6 +30,7 @@ from app.models.user import User
 from datetime import timedelta
 
 from app.models.self_inspection import (
+    SelfInspectionOpsBrief,
     SelfInspectionReportCreate,
     SelfInspectionReportUpdate,
     SelfInspectionReportResponse,
@@ -39,6 +50,7 @@ from app.models.self_inspection import (
     DeviceOnlineMetricListResponse,
     DeviceOnlineMetricResponse,
 )
+from app.models.organization import Organization
 from app.api.deps import get_current_active_user, require_doc_editor, require_superadmin
 from app.api.deps import can_cross_tenant_doc_write
 from app.api.deps import can_cross_tenant_read
@@ -60,6 +72,50 @@ from app.services.cos_storage import get_cos_storage
 router = APIRouter()
 logger = structlog.get_logger()
 settings = get_settings()
+SAFE_UPLOAD_MAX_BYTES = 19 * 1024 * 1024
+
+try:
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    PDF_FONT_NAME = "STSong-Light"
+except Exception:
+    PDF_FONT_NAME = "Helvetica"
+
+
+class OpsBriefGenerateRequest(BaseModel):
+    start_date: date
+    end_date: date
+    title: str | None = Field(default=None, max_length=256)
+    include_flow_data: bool = True
+    include_air_online_data: bool = True
+    calculate_pollutant_load: bool = False
+    target_org_id: UUID | None = None
+
+
+class OpsBriefListItemResponse(BaseModel):
+    id: UUID
+    org_id: UUID
+    title: str
+    report_type: str
+    start_date: date
+    end_date: date
+    generated_at: datetime
+    created_at: datetime
+
+
+class OpsBriefResponse(OpsBriefListItemResponse):
+    summary: str
+    recommendations: list[str] = Field(default_factory=list)
+    data_source_note: str
+    flow_data: dict[str, Any] | None = None
+    online_data: dict[str, Any] | None = None
+    pollutant_loads: dict[str, Any] | None = None
+
+
+class PaginatedOpsBriefListResponse(BaseModel):
+    items: list[OpsBriefListItemResponse]
+    total: int
+    page: int
+    page_size: int
 
 
 class PaginatedReportListResponse(BaseModel):
@@ -119,6 +175,158 @@ def _get_user_org_id(
     return user.org_id
 
 
+def _load_json_dict(payload: str | None) -> dict[str, Any] | None:
+    if not payload:
+        return None
+    try:
+        parsed = json.loads(payload)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _load_json_list(payload: str | None) -> list[Any]:
+    if not payload:
+        return []
+    try:
+        parsed = json.loads(payload)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _build_ops_brief_response(brief: SelfInspectionOpsBrief) -> OpsBriefResponse:
+    return OpsBriefResponse(
+        id=brief.id,
+        org_id=brief.org_id,
+        title=brief.title,
+        report_type=brief.report_type,
+        start_date=brief.start_date,
+        end_date=brief.end_date,
+        generated_at=brief.generated_at,
+        created_at=brief.created_at,
+        summary=brief.summary,
+        recommendations=_load_json_list(brief.recommendations_json),
+        data_source_note=brief.data_source_note,
+        flow_data=_load_json_dict(brief.flow_data_json),
+        online_data=_load_json_dict(brief.online_data_json),
+        pollutant_loads=_load_json_dict(brief.pollutant_loads_json),
+    )
+
+
+def _build_ops_brief_pdf(brief: OpsBriefResponse, org_name: str) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "OpsBriefTitle",
+        parent=styles["Heading1"],
+        fontName=PDF_FONT_NAME,
+        fontSize=16,
+        alignment=1,
+        spaceAfter=10,
+    )
+    section_style = ParagraphStyle(
+        "OpsBriefSection",
+        parent=styles["Heading2"],
+        fontName=PDF_FONT_NAME,
+        fontSize=12,
+        spaceAfter=6,
+    )
+    normal_style = ParagraphStyle(
+        "OpsBriefNormal",
+        parent=styles["Normal"],
+        fontName=PDF_FONT_NAME,
+        fontSize=9,
+        leading=14,
+        spaceAfter=4,
+    )
+
+    elements: list[Any] = []
+    elements.append(Paragraph("月度运维简报", title_style))
+    elements.append(Paragraph(f"企业：{escape(org_name)}", normal_style))
+    elements.append(Paragraph(f"周期：{brief.start_date} 至 {brief.end_date}", normal_style))
+    elements.append(Paragraph(f"生成时间：{brief.generated_at.strftime('%Y-%m-%d %H:%M:%S')}", normal_style))
+    elements.append(Spacer(1, 6))
+
+    elements.append(Paragraph("综合分析", section_style))
+    for line in (brief.summary or "").split("\n"):
+        text = line.strip()
+        if text:
+            elements.append(Paragraph(escape(text), normal_style))
+    elements.append(Spacer(1, 6))
+
+    if brief.recommendations:
+        elements.append(Paragraph("运维建议", section_style))
+        for index, item in enumerate(brief.recommendations, start=1):
+            elements.append(Paragraph(f"{index}. {escape(str(item))}", normal_style))
+        elements.append(Spacer(1, 6))
+
+    if brief.online_data and isinstance(brief.online_data, dict):
+        pollutants = brief.online_data.get("pollutants") or []
+        if pollutants:
+            elements.append(Paragraph("在线监测指标（月度统计）", section_style))
+            table_rows: list[list[str]] = [["指标", "均值", "最小", "最大", "点位数"]]
+            for item in pollutants[:24]:
+                unit = item.get("unit") or ""
+                table_rows.append([
+                    str(item.get("pollutant_name") or item.get("pollutant_code") or "-"),
+                    f"{item.get('avg', '-')}{unit}",
+                    f"{item.get('min', '-')}{unit}",
+                    f"{item.get('max', '-')}{unit}",
+                    str(item.get("count", "-")),
+                ])
+
+            table = Table(table_rows, colWidths=[58 * mm, 32 * mm, 32 * mm, 32 * mm, 24 * mm])
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E78")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("FONTNAME", (0, 0), (-1, -1), PDF_FONT_NAME),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ]))
+            elements.append(table)
+            elements.append(Spacer(1, 6))
+
+    if brief.flow_data and isinstance(brief.flow_data, dict):
+        elements.append(Paragraph("流量数据摘要", section_style))
+        avg_flow = brief.flow_data.get("avg_flow", "-")
+        max_flow = brief.flow_data.get("max_flow", "-")
+        min_flow = brief.flow_data.get("min_flow", "-")
+        daily_volume = brief.flow_data.get("daily_volume_m3", brief.flow_data.get("total_volume", "-"))
+        elements.append(Paragraph(f"平均流量：{avg_flow} L/s；最小：{min_flow} L/s；最大：{max_flow} L/s", normal_style))
+        elements.append(Paragraph(f"日总流量：{daily_volume} m³/d", normal_style))
+        elements.append(Spacer(1, 6))
+
+    elements.append(Paragraph("数据来源说明", section_style))
+    elements.append(Paragraph(escape(brief.data_source_note or "-"), normal_style))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+async def _fetch_ops_brief(
+    db: AsyncSession,
+    brief_id: UUID,
+    org_scope: UUID | None,
+) -> SelfInspectionOpsBrief | None:
+    conditions = [SelfInspectionOpsBrief.id == brief_id]
+    if org_scope is not None:
+        conditions.append(SelfInspectionOpsBrief.org_id == org_scope)
+    result = await db.execute(select(SelfInspectionOpsBrief).where(and_(*conditions)))
+    return result.scalar_one_or_none()
+
+
 @router.post("/upload", response_model=OCRUploadResponse)
 async def upload_and_ocr(
     file: Annotated[UploadFile, File(description="检测报告文件（PDF/图片）")],
@@ -164,6 +372,12 @@ async def upload_and_ocr(
 
     # 读取文件内容
     file_content = await file.read()
+
+    if len(file_content) > SAFE_UPLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="上传文件过大，请压缩到 19MB 以内后重试",
+        )
 
     # Upload original file to COS (CloudBase Storage)
     cos = get_cos_storage()
@@ -945,6 +1159,176 @@ async def delete_report(
 
 # ============== Analysis Endpoints ==============
 
+
+@router.post("/analysis/ops-brief", response_model=OpsBriefResponse)
+async def generate_ops_brief(
+    request: OpsBriefGenerateRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OpsBriefResponse:
+    """Generate and archive monthly operations brief."""
+    if request.end_date < request.start_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="结束日期不能早于开始日期",
+        )
+
+    org_id = _get_user_org_id(current_user, target_org_id=request.target_org_id)
+    if org_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请先选择目标企业后再生成运维简报",
+        )
+
+    ai_request = AIReportRequest(
+        start_date=request.start_date,
+        end_date=request.end_date,
+        report_type="monthly",
+        include_flow_data=request.include_flow_data,
+        include_air_online_data=request.include_air_online_data,
+        calculate_pollutant_load=request.calculate_pollutant_load,
+        target_org_id=org_id,
+    )
+    ai_result = await generate_ai_report(
+        request=ai_request,
+        current_user=current_user,
+        db=db,
+    )
+
+    title = (request.title or "").strip()
+    if not title:
+        title = f"{request.start_date}至{request.end_date}月度运维简报"
+
+    brief = SelfInspectionOpsBrief(
+        org_id=org_id,
+        generated_by=current_user.id,
+        title=title,
+        report_type="monthly",
+        start_date=request.start_date,
+        end_date=request.end_date,
+        summary=ai_result.summary,
+        recommendations_json=json.dumps(ai_result.recommendations, ensure_ascii=False),
+        data_source_note=ai_result.data_source_note,
+        flow_data_json=json.dumps(ai_result.flow_data, ensure_ascii=False) if ai_result.flow_data else None,
+        online_data_json=json.dumps(ai_result.online_data, ensure_ascii=False) if ai_result.online_data else None,
+        pollutant_loads_json=json.dumps(ai_result.pollutant_loads, ensure_ascii=False) if ai_result.pollutant_loads else None,
+        generated_at=ai_result.generated_at,
+    )
+
+    db.add(brief)
+    await db.commit()
+    await db.refresh(brief)
+
+    return _build_ops_brief_response(brief)
+
+
+@router.get("/analysis/ops-brief/history", response_model=PaginatedOpsBriefListResponse)
+async def list_ops_brief_history(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    target_org_id: UUID | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+) -> PaginatedOpsBriefListResponse:
+    org_scope = _get_user_org_id(
+        current_user,
+        allow_superadmin_all=True,
+        target_org_id=target_org_id,
+    )
+
+    conditions = []
+    if org_scope is not None:
+        conditions.append(SelfInspectionOpsBrief.org_id == org_scope)
+    if start_date:
+        conditions.append(SelfInspectionOpsBrief.end_date >= start_date)
+    if end_date:
+        conditions.append(SelfInspectionOpsBrief.start_date <= end_date)
+
+    count_query = select(func.count(SelfInspectionOpsBrief.id))
+    list_query = select(SelfInspectionOpsBrief)
+    if conditions:
+        condition_expr = and_(*conditions)
+        count_query = count_query.where(condition_expr)
+        list_query = list_query.where(condition_expr)
+
+    total = int((await db.execute(count_query)).scalar() or 0)
+
+    offset = (page - 1) * page_size
+    rows = (
+        await db.execute(
+            list_query
+            .order_by(SelfInspectionOpsBrief.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+    ).scalars().all()
+
+    return PaginatedOpsBriefListResponse(
+        items=[
+            OpsBriefListItemResponse(
+                id=row.id,
+                org_id=row.org_id,
+                title=row.title,
+                report_type=row.report_type,
+                start_date=row.start_date,
+                end_date=row.end_date,
+                generated_at=row.generated_at,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/analysis/ops-brief/{brief_id}", response_model=OpsBriefResponse)
+async def get_ops_brief(
+    brief_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OpsBriefResponse:
+    org_scope = _get_user_org_id(current_user, allow_superadmin_all=True)
+    brief = await _fetch_ops_brief(db, brief_id=brief_id, org_scope=org_scope)
+    if not brief:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="运维简报不存在")
+    return _build_ops_brief_response(brief)
+
+
+@router.get("/analysis/ops-brief/{brief_id}/download")
+async def download_ops_brief(
+    brief_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    format: str = Query(default="pdf", pattern="^(pdf)$"),
+) -> StreamingResponse:
+    org_scope = _get_user_org_id(current_user, allow_superadmin_all=True)
+    brief = await _fetch_ops_brief(db, brief_id=brief_id, org_scope=org_scope)
+    if not brief:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="运维简报不存在")
+
+    org_result = await db.execute(
+        select(Organization.name).where(Organization.id == brief.org_id)
+    )
+    org_name = org_result.scalar_one_or_none() or "企业"
+
+    payload = _build_ops_brief_response(brief)
+    file_content = _build_ops_brief_pdf(payload, org_name=org_name)
+    filename = f"ops_brief_{brief.start_date}_{brief.end_date}.pdf"
+    encoded_filename = quote(filename, safe="")
+
+    return StreamingResponse(
+        io.BytesIO(file_content),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+            "Content-Length": str(len(file_content)),
+        },
+    )
+
 @router.post("/analysis/trend", response_model=TrendAnalysisResponse)
 async def get_trend_analysis(
     request: TrendAnalysisRequest,
@@ -1105,6 +1489,7 @@ async def generate_ai_report(
                 # 继续生成报告，但不包含流量数据
 
         # 获取企业在线数据（全部指标）统计（如果启用）
+    if request.include_air_online_data:
         try:
             if not flow_org_id:
                 raise ValueError("online_data requested but flow_org_id is empty")

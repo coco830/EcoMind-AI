@@ -147,10 +147,39 @@ export interface AIReportResponse {
       avg: number | null
       count: number
       device_count: number
+      standard_limit?: number | null
     }>
     note?: string
   } | null
   pollutant_loads?: PollutantLoads | null
+}
+
+export interface OpsBriefResponse extends AIReportResponse {
+  id: string
+  org_id: string
+  title: string
+  report_type: 'monthly'
+  start_date: string
+  end_date: string
+  created_at: string
+}
+
+export interface OpsBriefListItem {
+  id: string
+  org_id: string
+  title: string
+  report_type: 'monthly'
+  start_date: string
+  end_date: string
+  generated_at: string
+  created_at: string
+}
+
+export interface PaginatedOpsBriefList {
+  items: OpsBriefListItem[]
+  total: number
+  page: number
+  page_size: number
 }
 
 // ============== 设备流量类型（数采仪只读数据） ==============
@@ -228,6 +257,7 @@ export interface AIReportRequest {
   end_date: string
   report_type?: 'monthly' | 'quarterly'
   include_flow_data?: boolean
+  include_air_online_data?: boolean
   calculate_pollutant_load?: boolean
   target_org_id?: string  // 超级管理员指定目标组织
 }
@@ -242,6 +272,24 @@ export interface FlowStatisticsParams {
   device_id: string
   start_date: string
   end_date: string
+}
+
+export interface OpsBriefGenerateRequest {
+  start_date: string
+  end_date: string
+  title?: string
+  include_flow_data?: boolean
+  include_air_online_data?: boolean
+  calculate_pollutant_load?: boolean
+  target_org_id?: string
+}
+
+export interface OpsBriefListParams {
+  start_date?: string
+  end_date?: string
+  target_org_id?: string
+  page?: number
+  page_size?: number
 }
 
 // ============== API 方法 ==============
@@ -361,6 +409,46 @@ export const selfInspectionApi = {
    */
   generateAIReport(data: AIReportRequest): Promise<AIReportResponse> {
     return request.post('/self-inspection/analysis/ai-report', data)
+  },
+
+  generateOpsBrief(data: OpsBriefGenerateRequest): Promise<OpsBriefResponse> {
+    return request.post('/self-inspection/analysis/ops-brief', data)
+  },
+
+  listOpsBriefHistory(params?: OpsBriefListParams): Promise<PaginatedOpsBriefList> {
+    return request.get('/self-inspection/analysis/ops-brief/history', { params })
+  },
+
+  getOpsBrief(briefId: string): Promise<OpsBriefResponse> {
+    return request.get(`/self-inspection/analysis/ops-brief/${briefId}`)
+  },
+
+  async downloadOpsBriefPdf(briefId: string): Promise<{ blob: Blob; filename: string }> {
+    const token = localStorage.getItem('token')
+    const response = await axios.get(`${apiBasePath}/self-inspection/analysis/ops-brief/${briefId}/download`, {
+      params: { format: 'pdf' },
+      responseType: 'blob',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+
+    let filename = `ops_brief_${briefId}.pdf`
+    const contentDisposition = response.headers['content-disposition']
+    if (contentDisposition) {
+      const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+      const asciiMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
+      if (utf8Match?.[1]) {
+        filename = decodeURIComponent(utf8Match[1])
+      } else if (asciiMatch?.[1]) {
+        filename = asciiMatch[1]
+      }
+    }
+
+    return {
+      blob: response.data,
+      filename
+    }
   },
 
   // ============== 设备流量 API（数采仪只读数据） ==============

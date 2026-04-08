@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, devices, data, alarms, dashboard, ai, organizations, reports, invitations, gateway, self_inspection, regulator
+from app.api.v1 import auth, devices, data, alarms, dashboard, ai, organizations, reports, invitations, gateway, self_inspection, regulator, api_keys, video
 
 api_router = APIRouter()
 
@@ -18,3 +18,5 @@ api_router.include_router(invitations.router, prefix="/invitations", tags=["invi
 api_router.include_router(gateway.router, prefix="/gateway", tags=["gateway"])
 api_router.include_router(self_inspection.router, prefix="/self-inspection", tags=["self-inspection"])
 api_router.include_router(regulator.router, prefix="/regulator", tags=["regulator"])
+api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
+api_router.include_router(video.router, prefix="/video", tags=["video"])

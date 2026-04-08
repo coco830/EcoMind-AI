@@ -52,6 +52,11 @@ class HJ212Packet:
         """Check if this is device login request (CN=9021)."""
         return self.cn == "9021"
 
+    @property
+    def is_time_sync(self) -> bool:
+        """Check if this is time sync request (CN=2031)."""
+        return self.cn == "2031"
+
 
 class HJ212Parser:
     """Parser for HJ 212 protocol packets."""

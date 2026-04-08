@@ -1,0 +1,537 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "EcoMind-AI 环保管家智能体工具 API",
+    "description": "EcoMind-AI 智慧环保平台开放接口，供 AI 智能体调用。支持设备状态查询、实时监测数据、报警管理、AI 趋势预测和运维诊断报告。",
+    "version": "1.0.0",
+    "contact": {
+      "name": "EcoMind-AI"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://ecomind-ai-193380-4-1304218020.sh.run.tcloudbase.com",
+      "description": "生产环境（腾讯云 CloudBase 云托管）"
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "EcoMind-AI 开放平台 API Key，通过管理后台创建。支持 single_org（绑定企业）和 all_orgs（全企业查询，调用时需传 enterprise_name/org_id）两种模式。"
+      }
+    }
+  },
+  "paths": {
+    "/openapi/device/status": {
+      "get": {
+        "operationId": "get_device_status",
+        "summary": "查询设备状态",
+        "description": "查询企业的监测设备状态，包括在线/离线/报警统计。single_org Key 默认查绑定企业；all_orgs Key 需传 enterprise_name 或 org_id 指定企业。",
+        "parameters": [
+          {
+            "name": "enterprise_name",
+            "in": "query",
+            "required": false,
+            "description": "企业名称（all_orgs Key 必填，支持模糊匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "org_id",
+            "in": "query",
+            "required": false,
+            "description": "组织ID（可选，优先于 enterprise_name）",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "description": "按状态筛选设备，可选值: online(在线), offline(离线), alarm(报警), maintenance(维护中)",
+            "schema": {
+              "type": "string",
+              "enum": ["online", "offline", "alarm", "maintenance"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回设备状态列表和统计摘要",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "summary": { "type": "string", "description": "一句话总结设备状态" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "enterprise": { "type": "string", "description": "企业名称" },
+                        "devices": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "device_name": { "type": "string" },
+                              "enterprise": { "type": "string" },
+                              "device_type": { "type": "string" },
+                              "status": { "type": "string" },
+                              "industry_type": { "type": "string" },
+                              "national_standard": { "type": "string" },
+                              "address": { "type": "string" },
+                              "last_heartbeat": { "type": "string" },
+                              "online_duration": { "type": "string" }
+                            }
+                          }
+                        },
+                        "status_summary": {
+                          "type": "object",
+                          "properties": {
+                            "total": { "type": "integer" },
+                            "online": { "type": "integer" },
+                            "offline": { "type": "integer" },
+                            "alarm": { "type": "integer" },
+                            "maintenance": { "type": "integer" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi/data/latest": {
+      "get": {
+        "operationId": "get_latest_data",
+        "summary": "查询最新监测数据",
+        "description": "获取指定设备的最新各项污染物监测数据，包含达标状态评估和风险等级。single_org Key 默认查绑定企业；all_orgs Key 需传 enterprise_name 或 org_id 指定企业。",
+        "parameters": [
+          {
+            "name": "enterprise_name",
+            "in": "query",
+            "required": false,
+            "description": "企业名称（all_orgs Key 必填，支持模糊匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "org_id",
+            "in": "query",
+            "required": false,
+            "description": "组织ID（可选，优先于 enterprise_name）",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "device_name",
+            "in": "query",
+            "required": false,
+            "description": "设备名称（模糊匹配），如'废水排放口'",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "device_mn",
+            "in": "query",
+            "required": false,
+            "description": "设备MN号（精确匹配）",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回最新监测数据和达标评估",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "summary": { "type": "string", "description": "一句话总结排放达标情况" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "device_name": { "type": "string" },
+                        "device_mn": { "type": "string" },
+                        "enterprise": { "type": "string" },
+                        "industry_type": { "type": "string" },
+                        "national_standard": { "type": "string" },
+                        "exceed_count": { "type": "integer", "description": "超标项数" },
+                        "warning_count": { "type": "integer", "description": "接近超标项数" },
+                        "readings": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "pollutant": { "type": "string", "description": "污染物名称" },
+                              "pollutant_code": { "type": "string" },
+                              "current_value": { "type": "number" },
+                              "unit": { "type": "string" },
+                              "threshold": { "type": "number", "description": "排放标准限值" },
+                              "compliance_status": { "type": "string", "description": "达标/接近超标/超标" },
+                              "risk_level": { "type": "string", "description": "normal/warning/critical" },
+                              "percentage_of_limit": { "type": "string" },
+                              "data_quality": { "type": "string" },
+                              "measurement_time": { "type": "string" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi/alarm/active": {
+      "get": {
+        "operationId": "get_active_alarms",
+        "summary": "查询当前活跃报警",
+        "description": "获取当前未处理的报警列表，包含报警详情、严重程度和持续时长。single_org Key 默认查绑定企业；all_orgs Key 需传 enterprise_name 或 org_id 指定企业。",
+        "parameters": [
+          {
+            "name": "enterprise_name",
+            "in": "query",
+            "required": false,
+            "description": "企业名称（all_orgs Key 必填，支持模糊匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "org_id",
+            "in": "query",
+            "required": false,
+            "description": "组织ID（可选，优先于 enterprise_name）",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "description": "按严重程度筛选: info(信息), warning(警告), critical(严重)",
+            "schema": {
+              "type": "string",
+              "enum": ["info", "warning", "critical"]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "返回数量上限，默认20",
+            "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回活跃报警列表和统计",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "summary": { "type": "string" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "enterprise": { "type": "string" },
+                        "alarms": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "alarm_id": { "type": "string" },
+                              "device_name": { "type": "string" },
+                              "enterprise": { "type": "string" },
+                              "alarm_type": { "type": "string" },
+                              "severity": { "type": "string" },
+                              "pollutant": { "type": "string" },
+                              "message": { "type": "string" },
+                              "current_value": { "type": "string" },
+                              "threshold": { "type": "string" },
+                              "created_at": { "type": "string" },
+                              "duration": { "type": "string" }
+                            }
+                          }
+                        },
+                        "summary": {
+                          "type": "object",
+                          "properties": {
+                            "total_pending": { "type": "integer" },
+                            "critical": { "type": "integer" },
+                            "warning": { "type": "integer" },
+                            "info": { "type": "integer" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi/alarm/acknowledge": {
+      "post": {
+        "operationId": "acknowledge_alarm",
+        "summary": "确认报警",
+        "description": "确认（处理）一条报警记录，将其状态从'待处理'更新为'已确认'。single_org Key 默认查绑定企业；all_orgs Key 需传 enterprise_name 或 org_id 指定企业。",
+        "parameters": [
+          {
+            "name": "enterprise_name",
+            "in": "query",
+            "required": false,
+            "description": "企业名称（all_orgs Key 必填，支持模糊匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "org_id",
+            "in": "query",
+            "required": false,
+            "description": "组织ID（可选，优先于 enterprise_name）",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "alarm_id",
+            "in": "query",
+            "required": true,
+            "description": "报警记录ID",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "报警确认结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "summary": { "type": "string" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "alarm_id": { "type": "string" },
+                        "new_status": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi/ai/predict": {
+      "get": {
+        "operationId": "get_ai_prediction",
+        "summary": "AI趋势预测",
+        "description": "获取指定设备某污染物的AI趋势预测（未来1-24小时），包含置信区间和超标风险评估。若请求污染物数据不足，会自动回退到该设备最近有数据的污染物并在返回中标注。single_org Key 默认查绑定企业；all_orgs Key 需传 enterprise_name 或 org_id 指定企业。",
+        "parameters": [
+          {
+            "name": "enterprise_name",
+            "in": "query",
+            "required": false,
+            "description": "企业名称（all_orgs Key 必填，支持模糊匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "org_id",
+            "in": "query",
+            "required": false,
+            "description": "组织ID（可选，优先于 enterprise_name）",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "device_name",
+            "in": "query",
+            "required": false,
+            "description": "设备名称（模糊匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "device_mn",
+            "in": "query",
+            "required": false,
+            "description": "设备MN号（精确匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "pollutant_code",
+            "in": "query",
+            "required": false,
+            "description": "污染物编码，默认w01018(COD)。常用: w01018(COD), w21003(氨氮), w21011(总磷), w21001(总氮), w01001(pH)",
+            "schema": { "type": "string", "default": "w01018" }
+          },
+          {
+            "name": "prediction_hours",
+            "in": "query",
+            "required": false,
+            "description": "预测时长（小时），1-24，默认4小时",
+            "schema": { "type": "integer", "default": 4, "minimum": 1, "maximum": 24 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回AI预测结果和风险评估",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "summary": { "type": "string" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "device_name": { "type": "string" },
+                        "device_mn": { "type": "string" },
+                        "enterprise": { "type": "string" },
+                        "pollutant": { "type": "string", "description": "实际用于预测的污染物名称" },
+                        "pollutant_code": { "type": "string", "description": "实际用于预测的污染物编码" },
+                        "requested_pollutant": { "type": "string", "description": "请求时传入的污染物名称（用于回退对照）" },
+                        "requested_pollutant_code": { "type": "string", "description": "请求时传入的污染物编码（用于回退对照）" },
+                        "used_fallback_pollutant": { "type": "boolean", "description": "是否触发了污染物自动回退" },
+                        "unit": { "type": "string" },
+                        "threshold": { "type": "number" },
+                        "national_standard": { "type": "string" },
+                        "current_value": { "type": "number" },
+                        "prediction_hours": { "type": "integer" },
+                        "model_type": { "type": "string" },
+                        "predictions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "time": { "type": "string" },
+                              "predicted_value": { "type": "number" },
+                              "lower_bound": { "type": "number" },
+                              "upper_bound": { "type": "number" }
+                            }
+                          }
+                        },
+                        "risk_assessment": {
+                          "type": "object",
+                          "properties": {
+                            "max_predicted": { "type": "number" },
+                            "min_predicted": { "type": "number" },
+                            "exceed_risk": { "type": "boolean" },
+                            "risk_description": { "type": "string" },
+                            "exceed_risk_time": { "type": "string" }
+                          }
+                        },
+                        "attempted_pollutant_codes": {
+                          "type": "array",
+                          "description": "本次预测尝试过的污染物编码列表（按尝试顺序）",
+                          "items": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi/ai/report": {
+      "get": {
+        "operationId": "get_ai_report",
+        "summary": "获取AI运维诊断报告",
+        "description": "获取指定设备的AI运维诊断报告（优先返回缓存的每日报告），包含问题分析、数据统计和运维建议。若目标日期无报告，会自动回退到最近可用报告并在返回中标注。每日02:00自动生成。single_org Key 默认查绑定企业；all_orgs Key 需传 enterprise_name 或 org_id 指定企业。",
+        "parameters": [
+          {
+            "name": "enterprise_name",
+            "in": "query",
+            "required": false,
+            "description": "企业名称（all_orgs Key 必填，支持模糊匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "org_id",
+            "in": "query",
+            "required": false,
+            "description": "组织ID（可选，优先于 enterprise_name）",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "device_name",
+            "in": "query",
+            "required": false,
+            "description": "设备名称（模糊匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "device_mn",
+            "in": "query",
+            "required": false,
+            "description": "设备MN号（精确匹配）",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "report_date",
+            "in": "query",
+            "required": false,
+            "description": "报告日期（格式: YYYY-MM-DD），默认今天",
+            "schema": { "type": "string", "format": "date" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回AI运维诊断报告",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "summary": { "type": "string" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "device_name": { "type": "string" },
+                        "device_mn": { "type": "string" },
+                        "enterprise": { "type": "string" },
+                        "industry_type": { "type": "string" },
+                        "national_standard": { "type": "string" },
+                        "report_date": { "type": "string", "description": "实际返回的报告日期（兼容字段）" },
+                        "requested_report_date": { "type": "string", "description": "请求的目标报告日期" },
+                        "actual_report_date": { "type": "string", "description": "实际命中的报告日期" },
+                        "used_fallback_report": { "type": "boolean", "description": "是否触发了报告自动回退" },
+                        "fallback_reason": { "type": "string", "description": "触发回退时的原因说明" },
+                        "report_content": { "type": "string", "description": "完整的AI诊断报告文本" },
+                        "report_status": { "type": "string" },
+                        "generated_at": { "type": "string" },
+                        "pollutant_count": { "type": "integer" },
+                        "data_points": { "type": "integer" },
+                        "domain": { "type": "string" },
+                        "stats_snapshot": { "type": "object" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -14,7 +14,9 @@ from typing import Any, Optional
 
 import structlog
 from fastapi import APIRouter, HTTPException, Header, status
-from pydantic import BaseModel, Field
+import base64
+import binascii
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.config import get_settings
 from app.core.pollutant_library import get_pollutant_name, is_known_pollutant
@@ -31,9 +33,16 @@ router = APIRouter()
 
 class HJ212DataRequest(BaseModel):
     """接收 HJ212 数据的请求体"""
-    raw_data: str = Field(..., description="原始 HJ212 数据包")
+    raw_data: Optional[str] = Field(None, description="原始 HJ212 数据包")
+    raw_data_base64: Optional[str] = Field(None, description="原始 HJ212 数据包 (base64)")
     source_ip: Optional[str] = Field(None, description="设备源 IP 地址")
     received_at: Optional[datetime] = Field(None, description="接收时间")
+
+    @model_validator(mode="after")
+    def _ensure_payload(self) -> "HJ212DataRequest":
+        if not self.raw_data and not self.raw_data_base64:
+            raise ValueError("raw_data or raw_data_base64 is required")
+        return self
 
 
 class HJ212DataResponse(BaseModel):
@@ -79,13 +88,31 @@ async def receive_hj212_data(
 
     # 解析 HJ212 数据包
     parser = HJ212Parser()
-    packet = parser.parse(request.raw_data)
+    raw_preview = request.raw_data or ""
+    if request.raw_data_base64:
+        try:
+            raw_bytes = base64.b64decode(request.raw_data_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            logger.warning(
+                "Invalid base64 payload",
+                source_ip=request.source_ip,
+                error=str(exc),
+            )
+            return HJ212DataResponse(
+                success=False,
+                message="Invalid base64 payload",
+            )
+        if not raw_preview:
+            raw_preview = raw_bytes[:100].decode("ascii", errors="ignore")
+        packet = parser.parse(raw_bytes)
+    else:
+        packet = parser.parse(request.raw_data or "")
 
     if packet is None:
         logger.warning(
             "Failed to parse HJ212 packet",
             source_ip=request.source_ip,
-            data_preview=request.raw_data[:100] if request.raw_data else "",
+            data_preview=raw_preview[:100] if raw_preview else "",
         )
         return HJ212DataResponse(
             success=False,
@@ -116,6 +143,9 @@ async def receive_hj212_data(
     # 处理监测数据
     if packet.is_realtime or packet.is_minute_data or packet.is_hour_data:
         result = await _handle_monitoring_data(packet, device_info, org_id, request.source_ip)
+
+        # 更新设备心跳时间 - 收到监测数据也说明设备在线
+        await _update_device_heartbeat(packet.mn)
 
         # 构建成功响应包
         success_response = parser.build_response(packet, result_code=1)
@@ -152,6 +182,20 @@ async def receive_hj212_data(
             message="Login successful",
             device_mn=packet.mn,
             response_packet=login_response.decode("utf-8"),
+        )
+
+    elif packet.is_time_sync:
+        # CN=2031 设备时钟同步请求，返回 CN=2032 时钟同步响应
+        logger.info("Device time sync request via HTTP", mn=packet.mn, org_id=org_id)
+        # 更新设备心跳时间和状态
+        await _update_device_heartbeat(packet.mn)
+        # 返回时钟同步成功响应
+        sync_response = parser.build_response(packet, result_code=1)
+        return HJ212DataResponse(
+            success=True,
+            message="Time sync successful",
+            device_mn=packet.mn,
+            response_packet=sync_response.decode("utf-8"),
         )
 
     else:

@@ -1,5 +1,5 @@
 /**
- * HJ 212-2017/2025 水质监测污染物字典
+ * HJ 212-2017/2025 监测污染物字典
  * 与后端 POLLUTANT_MAP 保持一致
  */
 
@@ -132,6 +132,31 @@ export const POLLUTANT_MAP: Record<string, PollutantInfo> = {
   'w01006': { name: '矿化度', unit: 'mg/L', precision: 0, category: 'comprehensive' },
   'w99001': { name: '叶绿素a', unit: 'mg/m³', precision: 2, category: 'comprehensive' },
   'w99002': { name: '藻密度', unit: '万个/L', precision: 0, category: 'comprehensive' },
+
+  // =========================================================================
+  // 大气/烟气监测指标
+  // =========================================================================
+  'a34013': { name: '烟尘(颗粒物)', unit: 'mg/m³', precision: 2, category: 'air_particulate' },
+  'a21026': { name: '二氧化硫(SO2)', unit: 'mg/m³', precision: 2, category: 'air_gas' },
+  'a21002': { name: '氮氧化物(NOx)', unit: 'mg/m³', precision: 2, category: 'air_gas' },
+  'a21003': { name: '一氧化碳(CO)', unit: 'mg/m³', precision: 2, category: 'air_gas' },
+  'a19001': { name: '烟气黑度', unit: '级', precision: 0, category: 'air_conditions' },
+  'a01006': { name: '氧含量', unit: '%', precision: 2, category: 'air_conditions' },
+  'a01007': { name: '烟气温度', unit: '℃', precision: 1, category: 'air_conditions' },
+  'a01011': { name: '烟气流速', unit: 'm/s', precision: 2, category: 'air_conditions' },
+  'a01012': { name: '烟气温度', unit: '℃', precision: 1, category: 'air_conditions' },
+  'a01013': { name: '烟气压力', unit: 'kPa', precision: 2, category: 'air_conditions' },
+  'a01014': { name: '烟气湿度', unit: '%', precision: 1, category: 'air_conditions' },
+  'a34004': { name: 'PM2.5', unit: 'μg/m³', precision: 0, category: 'air_particulate' },
+  'a34002': { name: 'PM10', unit: 'μg/m³', precision: 0, category: 'air_particulate' },
+  'a21004': { name: '二氧化氮(NO2)', unit: 'μg/m³', precision: 0, category: 'air_gas' },
+  'a05024': { name: '臭氧(O3)', unit: 'μg/m³', precision: 0, category: 'air_gas' },
+  'a05001': { name: 'PM2.5', unit: 'μg/m³', precision: 0, category: 'air_particulate' },
+  'a05002': { name: 'PM10', unit: 'μg/m³', precision: 0, category: 'air_particulate' },
+}
+
+export function normalizePollutantCode(code: string): string {
+  return (code || '').trim().toLowerCase()
 }
 
 // 污染物分类定义
@@ -147,6 +172,9 @@ export const POLLUTANT_CATEGORIES: Record<string, { name: string; description: s
   microorganism: { name: '微生物', description: '大肠菌群、细菌' },
   radioactive: { name: '放射性', description: 'α、β放射性' },
   comprehensive: { name: '综合指标', description: '硬度、叶绿素等' },
+  air_particulate: { name: '颗粒物', description: '烟尘、PM2.5、PM10' },
+  air_gas: { name: '气态污染物', description: 'SO2、NOx、CO、NO2、O3' },
+  air_conditions: { name: '烟气工况', description: '流速、温度、湿度、压力、含氧' },
 }
 
 // 常用指标快捷列表（用于默认显示）
@@ -160,6 +188,16 @@ export const COMMON_POLLUTANTS = [
   'w01020', // TOC (有机碳)
   'w01010', // 水温
   'w00000', // 瞬时流量
+]
+
+// 大气监测常用指标：SO2、NOx、颗粒物、烟气黑度、含氧量、烟气温度
+export const AIR_COMMON_POLLUTANTS = [
+  'a21026', // SO2
+  'a21002', // NOx
+  'a34013', // 颗粒物
+  'a19001', // 烟气黑度
+  'a01006', // 含氧量
+  'a01007', // 烟气温度
 ]
 
 // 重金属指标列表（动态从字典中提取所有重金属）
@@ -176,21 +214,24 @@ export const HEAVY_METAL_POLLUTANTS = Object.entries(POLLUTANT_MAP)
  * 获取污染物信息
  */
 export function getPollutantInfo(code: string): PollutantInfo | undefined {
-  return POLLUTANT_MAP[code.toLowerCase()]
+  const normalizedCode = normalizePollutantCode(code)
+  return POLLUTANT_MAP[normalizedCode]
 }
 
 /**
  * 获取污染物名称
  */
 export function getPollutantName(code: string): string {
-  return POLLUTANT_MAP[code.toLowerCase()]?.name || code
+  const normalizedCode = normalizePollutantCode(code)
+  return POLLUTANT_MAP[normalizedCode]?.name || code
 }
 
 /**
  * 获取污染物单位
  */
 export function getPollutantUnit(code: string): string {
-  return POLLUTANT_MAP[code.toLowerCase()]?.unit || 'mg/L'
+  const normalizedCode = normalizePollutantCode(code)
+  return POLLUTANT_MAP[normalizedCode]?.unit || 'mg/L'
 }
 
 /**
@@ -223,7 +264,8 @@ export function getPollutantsByCategory(category: string): { code: string; info:
  */
 export function generatePollutantOptions(codes?: string[]): { label: string; value: string }[] {
   const targetCodes = codes || Object.keys(POLLUTANT_MAP)
-  return targetCodes
+  const normalizedCodes = [...new Set(targetCodes.map(code => normalizePollutantCode(code)))]
+  return normalizedCodes
     .filter(code => POLLUTANT_MAP[code])
     .map(code => ({
       label: `${POLLUTANT_MAP[code].name} (${code})`,
@@ -257,7 +299,8 @@ export function generateGroupedPollutantOptions() {
  * 判断是否为重金属
  */
 export function isHeavyMetal(code: string): boolean {
-  const category = POLLUTANT_MAP[code.toLowerCase()]?.category
+  const normalizedCode = normalizePollutantCode(code)
+  const category = POLLUTANT_MAP[normalizedCode]?.category
   return category === 'heavy_metals_class1' || category === 'heavy_metals_class2'
 }
 
@@ -266,6 +309,8 @@ export function isHeavyMetal(code: string): boolean {
  * 使用现代柔和色系 - 中高饱和度，清晰可读且高级
  */
 export function getPollutantColor(code: string, index: number = 0): string {
+  const normalizedCode = normalizePollutantCode(code)
+
   // 现代柔和配色方案（中高饱和度，鲜活且高级）
   const colors: Record<string, string> = {
     // 常用指标
@@ -296,7 +341,7 @@ export function getPollutantColor(code: string, index: number = 0): string {
     'w21023': '#C98855', // 磷酸盐 - 蜜糖色
   }
 
-  if (colors[code]) return colors[code]
+  if (colors[normalizedCode]) return colors[normalizedCode]
 
   // 默认现代柔和色系循环（16色）
   const modernSoftColors = [

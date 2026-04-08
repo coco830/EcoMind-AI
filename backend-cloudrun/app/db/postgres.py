@@ -127,6 +127,8 @@ async def init_db() -> None:
 
     await _ensure_alarm_sms_columns()
     await _ensure_regulator_scope_columns()
+    await _ensure_video_columns()
+    await _ensure_cascade_delete_fks()
     # Create default organization if not exists
     await _create_default_organization()
 
@@ -236,6 +238,40 @@ async def _ensure_regulator_scope_columns() -> None:
             await _ensure_postgres_columns(conn)
 
 
+async def _ensure_video_columns() -> None:
+    """Ensure video channel ledger columns exist for existing deployments."""
+    sqlite_video_channel_columns = {
+        "lifecycle_status": "lifecycle_status VARCHAR(32) NOT NULL DEFAULT 'pending_survey'",
+        "network_provider": "network_provider VARCHAR(64) NULL",
+        "fixed_ip": "fixed_ip VARCHAR(64) NULL",
+        "install_location": "install_location TEXT NULL",
+        "surveyor_name": "surveyor_name VARCHAR(64) NULL",
+        "installer_name": "installer_name VARCHAR(64) NULL",
+        "accepted_by": "accepted_by VARCHAR(64) NULL",
+        "accepted_at": "accepted_at DATETIME NULL",
+        "acceptance_notes": "acceptance_notes TEXT NULL",
+    }
+    generic_video_channel_columns = {
+        "lifecycle_status": "VARCHAR(32) NOT NULL DEFAULT 'pending_survey'",
+        "network_provider": "VARCHAR(64) NULL",
+        "fixed_ip": "VARCHAR(64) NULL",
+        "install_location": "TEXT NULL",
+        "surveyor_name": "VARCHAR(64) NULL",
+        "installer_name": "VARCHAR(64) NULL",
+        "accepted_by": "VARCHAR(64) NULL",
+        "accepted_at": "DATETIME NULL" if is_mysql else "TIMESTAMP WITH TIME ZONE NULL",
+        "acceptance_notes": "TEXT NULL",
+    }
+
+    async with engine.begin() as conn:
+        if is_sqlite:
+            await _ensure_sqlite_table_columns(conn, "video_channels", sqlite_video_channel_columns)
+        elif is_mysql:
+            await _ensure_mysql_table_columns(conn, "video_channels", generic_video_channel_columns)
+        else:
+            await _ensure_postgres_table_columns(conn, "video_channels", generic_video_channel_columns)
+
+
 async def _ensure_sqlite_columns(conn) -> None:
     org_columns = {
         "org_type": "org_type VARCHAR(32) NOT NULL DEFAULT 'enterprise'",
@@ -267,11 +303,15 @@ async def _ensure_sqlite_columns(conn) -> None:
         "invalid_count": "invalid_count INTEGER NOT NULL DEFAULT 0",
         "avg_value": "avg_value DOUBLE NULL",
     }
+    api_client_columns = {
+        "access_scope": "access_scope VARCHAR(32) NOT NULL DEFAULT 'single_org'",
+    }
 
     await _ensure_sqlite_table_columns(conn, "organizations", org_columns)
     await _ensure_sqlite_table_columns(conn, "invitation_codes", invitation_columns)
     await _ensure_sqlite_table_columns(conn, "devices", device_columns)
     await _ensure_sqlite_table_columns(conn, "monitoring_daily_stats", daily_stats_columns)
+    await _ensure_sqlite_table_columns(conn, "api_clients", api_client_columns)
 
 
 async def _ensure_sqlite_table_columns(conn, table: str, columns: dict[str, str]) -> None:
@@ -314,11 +354,15 @@ async def _ensure_mysql_columns(conn) -> None:
         "invalid_count": "INT NOT NULL DEFAULT 0",
         "avg_value": "DOUBLE NULL",
     }
+    api_client_columns = {
+        "access_scope": "VARCHAR(32) NOT NULL DEFAULT 'single_org'",
+    }
 
     await _ensure_mysql_table_columns(conn, "organizations", org_columns)
     await _ensure_mysql_table_columns(conn, "invitation_codes", invitation_columns)
     await _ensure_mysql_table_columns(conn, "devices", device_columns)
     await _ensure_mysql_table_columns(conn, "monitoring_daily_stats", daily_stats_columns)
+    await _ensure_mysql_table_columns(conn, "api_clients", api_client_columns)
 
 
 async def _ensure_mysql_table_columns(conn, table: str, columns: dict[str, str]) -> None:
@@ -370,11 +414,15 @@ async def _ensure_postgres_columns(conn) -> None:
         "invalid_count": "INTEGER NOT NULL DEFAULT 0",
         "avg_value": "DOUBLE PRECISION NULL",
     }
+    api_client_columns = {
+        "access_scope": "VARCHAR(32) NOT NULL DEFAULT 'single_org'",
+    }
 
     await _ensure_postgres_table_columns(conn, "organizations", org_columns)
     await _ensure_postgres_table_columns(conn, "invitation_codes", invitation_columns)
     await _ensure_postgres_table_columns(conn, "devices", device_columns)
     await _ensure_postgres_table_columns(conn, "monitoring_daily_stats", daily_stats_columns)
+    await _ensure_postgres_table_columns(conn, "api_clients", api_client_columns)
 
 
 async def _ensure_postgres_table_columns(conn, table: str, columns: dict[str, str]) -> None:
@@ -390,3 +438,42 @@ async def _ensure_postgres_table_columns(conn, table: str, columns: dict[str, st
         if name in existing:
             continue
         await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {ddl}"))
+
+
+async def _ensure_cascade_delete_fks() -> None:
+    """Ensure device foreign keys have ON DELETE CASCADE (MySQL only)."""
+    if not is_mysql:
+        return
+
+    async with engine.begin() as conn:
+        # Check current FK definitions for alarms and daily_reports
+        for table_name in ("alarms", "daily_reports"):
+            result = await conn.execute(
+                text(
+                    "SELECT CONSTRAINT_NAME, DELETE_RULE "
+                    "FROM information_schema.REFERENTIAL_CONSTRAINTS "
+                    "WHERE CONSTRAINT_SCHEMA = DATABASE() "
+                    "AND TABLE_NAME = :table "
+                    "AND REFERENCED_TABLE_NAME = 'devices'"
+                ),
+                {"table": table_name},
+            )
+            row = result.first()
+            if row is None:
+                continue
+            constraint_name, delete_rule = row
+            if delete_rule == "CASCADE":
+                continue
+            # Drop old FK and recreate with CASCADE
+            try:
+                await conn.execute(
+                    text(f"ALTER TABLE `{table_name}` DROP FOREIGN KEY `{constraint_name}`")
+                )
+                await conn.execute(
+                    text(
+                        f"ALTER TABLE `{table_name}` ADD CONSTRAINT `{constraint_name}` "
+                        f"FOREIGN KEY (`device_id`) REFERENCES `devices` (`id`) ON DELETE CASCADE"
+                    )
+                )
+            except Exception:
+                pass  # Best effort

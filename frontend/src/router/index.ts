@@ -53,6 +53,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Alarms.vue')
       },
       {
+        path: 'video',
+        name: 'VideoCenter',
+        component: () => import('@/views/VideoCenter.vue')
+      },
+      {
         path: 'reports',
         name: 'Reports',
         component: () => import('@/views/Reports.vue')

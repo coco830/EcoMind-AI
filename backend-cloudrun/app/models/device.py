@@ -211,8 +211,12 @@ class Device(Base):
 
     # Relationships
     organization: Mapped["Organization"] = relationship(back_populates="devices")
-    alarms: Mapped[list["Alarm"]] = relationship(back_populates="device")
-    daily_reports: Mapped[list["DailyReport"]] = relationship(back_populates="device")
+    alarms: Mapped[list["Alarm"]] = relationship(
+        back_populates="device", cascade="all, delete-orphan", passive_deletes=True
+    )
+    daily_reports: Mapped[list["DailyReport"]] = relationship(
+        back_populates="device", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class PollutantThreshold(BaseModel):

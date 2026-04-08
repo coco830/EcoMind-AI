@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """
 讯飞星火大模型 WebSocket 客户端
-Spark Pro-128K 原生 WebSocket 接入实现
+Spark Max (v3.5) 原生 WebSocket 接入实现
 """
 
 import base64
@@ -64,6 +64,7 @@ class SparkClient:
 
     # 星火模型域名映射
     SPARK_DOMAINS = {
+        "generalv3.5": "generalv3.5",  # Spark Max
         "pro-128k": "pro-128k",
         "max": "max",
         "ultra": "ultra",
@@ -75,8 +76,8 @@ class SparkClient:
         app_id: str,
         api_secret: str,
         api_key: str,
-        spark_url: str = "wss://spark-api.xf-yun.com/chat/pro-128k",
-        domain: str = "pro-128k",
+        spark_url: str = "wss://spark-api.xf-yun.com/v3.5/chat",
+        domain: str = "generalv3.5",
         max_tokens: int = 8192,
         temperature: float = 0.5,
         top_k: int = 4,
@@ -319,7 +320,7 @@ class SparkClient:
 
                 if code != 0:
                     # 错误处理
-                    if code in [10003, 10004, 10005, 10907]:
+                    if code in [10003, 10004, 10005, 10907, 11200, 11201]:
                         raise SparkAuthError(f"Auth error [{code}]: {message_text}")
                     else:
                         raise SparkClientError(f"API error [{code}]: {message_text}")

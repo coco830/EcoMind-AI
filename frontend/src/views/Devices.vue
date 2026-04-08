@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import AMapLoader from '@amap/amap-jsapi-loader'
 import { deviceApi, type Device, type DeviceCreate, type ThresholdConfig, type IndustryType, type IndustryTypeInfo, POLLUTANT_OPTIONS, getWaterThresholdTemplate } from '@/api/devices'
+import { getStandardLimit, type DeviceType as StandardDeviceType } from '@/config/standardLimits'
 import { organizationApi, type Organization } from '@/api/organizations'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
+const router = useRouter()
 
 // Organization filter for superadmin
 const organizations = ref<Organization[]>([])
@@ -34,7 +37,11 @@ let autoComplete: any = null
 const addressInputId = 'device-address-input'
 
 // Default threshold config
-const getDefaultThresholdConfig = (deviceType: string, industryType?: IndustryType): ThresholdConfig => {
+const getDefaultThresholdConfig = (
+  deviceType: string,
+  industryType?: IndustryType,
+  nationalStandard?: string
+): ThresholdConfig => {
   if (deviceType === 'water') {
     return getWaterThresholdTemplate(industryType)
   }
@@ -44,8 +51,13 @@ const getDefaultThresholdConfig = (deviceType: string, industryType?: IndustryTy
     pollutants: pollutants.map(p => ({
       pollutant_code: p.code,
       pollutant_name: p.name,
-      warning_value: p.defaultWarning,
-      alarm_value: p.defaultAlarm,
+      warning_value: p.defaultWarning ?? (() => {
+        const limit = getStandardLimit(deviceType as StandardDeviceType, p.code, industryType, nationalStandard)
+        return limit ? Number((limit * 0.8).toFixed(2)) : 0
+      })(),
+      alarm_value: p.defaultAlarm ?? (
+        getStandardLimit(deviceType as StandardDeviceType, p.code, industryType, nationalStandard) || 0
+      ),
       unit: p.unit,
     }))
   }
@@ -74,9 +86,13 @@ const handleIndustryTypeChange = (industryType: IndustryType | undefined) => {
     form.value.national_standard = ''
   }
 
-  // 水质设备切换行业时，自动加载对应模板（新建时生效，编辑时不强制覆盖）
-  if (form.value.device_type === 'water' && !editingId.value) {
-    form.value.thresholds = getDefaultThresholdConfig('water', industryType)
+  // 新建设备切换行业时，自动加载默认阈值模板（编辑时不强制覆盖）
+  if (!editingId.value) {
+    form.value.thresholds = getDefaultThresholdConfig(
+      form.value.device_type,
+      industryType,
+      form.value.national_standard
+    )
   }
 }
 
@@ -98,7 +114,7 @@ const getOrganizationName = (orgId: string | null): string => {
 watch(() => form.value.device_type, (newType) => {
   if (!editingId.value) {
     // Only auto-update for new devices
-    form.value.thresholds = getDefaultThresholdConfig(newType, form.value.industry_type)
+    form.value.thresholds = getDefaultThresholdConfig(newType, form.value.industry_type, form.value.national_standard)
   }
 })
 
@@ -164,7 +180,11 @@ const openDialog = (device?: Device) => {
       latitude: device.latitude || undefined,
       longitude: device.longitude || undefined,
       address: device.address || '',
-      thresholds: device.thresholds || getDefaultThresholdConfig(device.device_type)
+      thresholds: device.thresholds || getDefaultThresholdConfig(
+        device.device_type,
+        device.industry_type || undefined,
+        device.national_standard || undefined
+      )
     }
     // 记录已有地址，避免编辑时重复地理编码
     if (device.address) {
@@ -214,7 +234,11 @@ const handleSubmit = async () => {
 
 const ensureThresholds = () => {
   if (!form.value.thresholds) {
-    form.value.thresholds = getDefaultThresholdConfig(form.value.device_type, form.value.industry_type)
+    form.value.thresholds = getDefaultThresholdConfig(
+      form.value.device_type,
+      form.value.industry_type,
+      form.value.national_standard
+    )
   }
 }
 
@@ -241,6 +265,17 @@ const addPollutantRow = () => {
 const removePollutantRow = (index: number) => {
   if (!form.value.thresholds) return
   form.value.thresholds.pollutants.splice(index, 1)
+}
+
+const getStandardLimitDisplay = (code: string, unit?: string) => {
+  const limit = getStandardLimit(
+    form.value.device_type as StandardDeviceType,
+    code,
+    form.value.industry_type,
+    form.value.national_standard
+  )
+  if (limit === null || limit === undefined) return '-'
+  return unit ? `${limit} ${unit}` : `${limit}`
 }
 
 const keepFlowOnly = () => {
@@ -354,6 +389,10 @@ const handleDelete = async (device: Device) => {
   } catch {
     // User cancelled
   }
+}
+
+const openVideoCenter = (device: Device) => {
+  router.push({ path: '/video', query: { device_id: device.id } })
 }
 
 const getStatusType = (status: string) => {
@@ -490,6 +529,11 @@ onMounted(() => {
             {{ row.last_heartbeat ? new Date(row.last_heartbeat).toLocaleString() : '-' }}
           </template>
         </el-table-column>
+        <el-table-column label="视频联动" width="100">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openVideoCenter(row)">查看</el-button>
+          </template>
+        </el-table-column>
         <el-table-column v-if="canModifyDevices" label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" size="small" @click="openDialog(row)">编辑</el-button>
@@ -619,6 +663,11 @@ onMounted(() => {
                 <el-input v-model="row.pollutant_name" size="small" placeholder="名称" />
               </template>
             </el-table-column>
+            <el-table-column label="国标限值" width="120">
+              <template #default="{ row }">
+                <span>{{ getStandardLimitDisplay(row.pollutant_code, row.unit) }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="预警值" width="150">
               <template #default="{ row }">
                 <el-input-number
@@ -654,7 +703,7 @@ onMounted(() => {
             </el-table>
           </div>
           <div class="threshold-hint">
-            预警值触发黄色预警，报警值触发红色告警。
+            预警值触发黄色预警，报警值触发红色告警，国标限值用于超标统计。
             <el-button link size="small" class="add-btn" @click="addPollutantRow">+ 添加指标</el-button>
           </div>
         </template>

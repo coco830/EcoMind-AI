@@ -237,12 +237,12 @@ class Settings(BaseSettings):
     anomaly_detection_enabled: bool = True
     anomaly_threshold: float = 0.85
 
-    # Spark LLM (讯飞星火大模型)
+    # Spark LLM (讯飞星火大模型 - Spark Max)
     spark_app_id: str = ""
     spark_api_key: str = ""
     spark_api_secret: str = ""
-    spark_api_url: str = "wss://spark-api.xf-yun.com/chat/pro-128k"
-    spark_domain: str = "pro-128k"
+    spark_api_url: str = "wss://spark-api.xf-yun.com/v3.5/chat"
+    spark_domain: str = "generalv3.5"
 
     # Baidu OCR (百度文字识别)
     baidu_ocr_api_key: str = ""
@@ -266,6 +266,21 @@ class Settings(BaseSettings):
     tencent_sms_sdk_app_id: str = ""
     tencent_sms_sign_name: str = ""
     tencent_sms_template_id: str = ""
+
+    # OpenClaw webhook push (active alarm notification)
+    openclaw_webhook_enabled: bool = False
+    openclaw_webhook_url: str = ""
+    openclaw_webhook_token: str = ""
+    openclaw_webhook_timeout_seconds: float = 6.0
+    openclaw_webhook_retry_times: int = 3
+    openclaw_webhook_retry_base_delay_seconds: float = 1.0
+    openclaw_webhook_dedup_minutes: int = 10
+    openclaw_webhook_min_level: Literal["info", "warning", "critical"] = "warning"
+    openclaw_webhook_mode: str = "now"
+    openclaw_webhook_thinking: Literal["low", "medium", "high"] = "low"
+    openclaw_webhook_channel: str = ""
+    openclaw_webhook_sender_name: str = "EcoMindAlarm"
+    openclaw_webhook_max_text_length: int = 1200
 
     # Email Configuration (SMTP)
     smtp_host: str = ""

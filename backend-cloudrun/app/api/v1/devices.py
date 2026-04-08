@@ -19,6 +19,7 @@ from app.models.device import (
 from app.models.organization import Organization
 from app.models.user import User
 from app.api.deps import get_current_active_user, require_superadmin, can_cross_tenant_read
+from app.core.pollutant_library import normalize_pollutant_code
 
 router = APIRouter()
 
@@ -46,7 +47,8 @@ def _device_to_response(device: Device) -> DeviceResponse:
     # Parse pollutant_codes
     pollutant_codes = None
     if device.pollutant_codes:
-        pollutant_codes = [c.strip() for c in device.pollutant_codes.split(",") if c.strip()]
+        parsed_codes = [normalize_pollutant_code(c) for c in device.pollutant_codes.split(",") if c.strip()]
+        pollutant_codes = list(dict.fromkeys(parsed_codes))
 
     # Parse thresholds
     thresholds = _deserialize_thresholds(device.thresholds)
@@ -279,7 +281,11 @@ async def create_device(
         latitude=device_data.latitude,
         longitude=device_data.longitude,
         address=device_data.address,
-        pollutant_codes=",".join(device_data.pollutant_codes) if device_data.pollutant_codes else None,
+        pollutant_codes=(
+            ",".join(list(dict.fromkeys(normalize_pollutant_code(code) for code in device_data.pollutant_codes)))
+            if device_data.pollutant_codes
+            else None
+        ),
         thresholds=_serialize_thresholds(device_data.thresholds),
     )
     db.add(device)
@@ -338,7 +344,11 @@ async def update_device(
     device.latitude = device_data.latitude
     device.longitude = device_data.longitude
     device.address = device_data.address
-    device.pollutant_codes = ",".join(device_data.pollutant_codes) if device_data.pollutant_codes else None
+    device.pollutant_codes = (
+        ",".join(list(dict.fromkeys(normalize_pollutant_code(code) for code in device_data.pollutant_codes)))
+        if device_data.pollutant_codes
+        else None
+    )
     device.thresholds = _serialize_thresholds(device_data.thresholds)
 
     await db.flush()
@@ -372,3 +382,4 @@ async def delete_device(
             )
 
     await db.delete(device)
+    await db.flush()

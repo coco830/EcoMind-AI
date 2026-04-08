@@ -18,6 +18,7 @@
 """
 
 import asyncio
+import base64
 import os
 import sys
 import signal
@@ -133,7 +134,7 @@ class TCPToHTTPProxy:
                 raw_data = data.decode("utf-8", errors="ignore")
                 logger.debug(f"收到数据 ({conn_id}): {raw_data[:100]}...")
 
-                response = await self._forward_to_cloudbase(raw_data, addr[0])
+                response = await self._forward_to_cloudbase(raw_data, data, addr[0])
 
                 # 如果有响应包，回传给设备
                 if response and response.get("response_packet"):
@@ -160,6 +161,7 @@ class TCPToHTTPProxy:
     async def _forward_to_cloudbase(
         self,
         raw_data: str,
+        raw_bytes: bytes,
         source_ip: str,
     ) -> Optional[dict]:
         """将数据转发到云托管 HTTP 接口"""
@@ -173,6 +175,7 @@ class TCPToHTTPProxy:
         }
         payload = {
             "raw_data": raw_data,
+            "raw_data_base64": base64.b64encode(raw_bytes).decode("ascii"),
             "source_ip": source_ip,
             "received_at": datetime.utcnow().isoformat(),
         }

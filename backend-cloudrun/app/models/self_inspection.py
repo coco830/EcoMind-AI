@@ -107,6 +107,38 @@ class SelfInspectionData(Base):
     report: Mapped["SelfInspectionReport"] = relationship(back_populates="data_items")
 
 
+class SelfInspectionOpsBrief(Base):
+    """Archived AI operations brief generated from mixed data sources."""
+
+    __tablename__ = "self_inspection_ops_briefs"
+    __table_args__ = (
+        Index('ix_self_inspection_ops_brief_org_id', 'org_id'),
+        Index('ix_self_inspection_ops_brief_period', 'start_date', 'end_date'),
+        Index('ix_self_inspection_ops_brief_created_at', 'created_at'),
+    )
+
+    id: Mapped[UUID] = mapped_column(GUID, primary_key=True, default=uuid4)
+    org_id: Mapped[UUID] = mapped_column(GUID, ForeignKey("organizations.id"), nullable=False)
+    generated_by: Mapped[UUID] = mapped_column(GUID, ForeignKey("users.id"), nullable=False)
+
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    report_type: Mapped[str] = mapped_column(String(32), default="monthly", nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    recommendations_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    data_source_note: Mapped[str] = mapped_column(Text, nullable=False)
+
+    flow_data_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    online_data_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    pollutant_loads_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 # ============== Pydantic Schemas ==============
 
 class SelfInspectionDataCreate(BaseSchema):
@@ -242,6 +274,7 @@ class AIReportRequest(BaseSchema):
     end_date: date
     report_type: str = Field(default="monthly", pattern="^(monthly|quarterly)$")
     include_flow_data: bool = Field(default=False, description="是否整合数采仪瞬时流量数据")
+    include_air_online_data: bool = Field(default=False, description="是否整合在线监测指标统计")
     calculate_pollutant_load: bool = Field(default=False, description="是否计算污染负荷")
     target_org_id: UUID | None = Field(default=None, description="目标组织ID（超级管理员生成报告时指定）")
 

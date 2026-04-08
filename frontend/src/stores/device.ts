@@ -5,7 +5,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { deviceApi, type Device } from '@/api/devices'
-import { COMMON_POLLUTANTS, POLLUTANT_MAP, getPollutantInfo } from '@/config/pollutants'
+import { COMMON_POLLUTANTS, AIR_COMMON_POLLUTANTS, POLLUTANT_MAP, getPollutantInfo } from '@/config/pollutants'
 
 export interface ActivePollutant {
   code: string
@@ -48,7 +48,7 @@ export const useDeviceStore = defineStore('device', () => {
   function parseDevicePollutants(device: Device): string[] {
     const codes = device.pollutant_codes
     if (!codes) {
-      return COMMON_POLLUTANTS // 默认显示常用指标
+      return device.device_type === 'air' ? AIR_COMMON_POLLUTANTS : COMMON_POLLUTANTS
     }
 
     // 支持多种格式：数组、逗号分隔字符串、JSON字符串
@@ -69,7 +69,7 @@ export const useDeviceStore = defineStore('device', () => {
       }
     }
 
-    return COMMON_POLLUTANTS
+    return device.device_type === 'air' ? AIR_COMMON_POLLUTANTS : COMMON_POLLUTANTS
   }
 
   // 加载设备列表

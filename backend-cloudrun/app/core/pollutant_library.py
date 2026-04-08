@@ -13,6 +13,9 @@ HJ 212-2017/2025 标准水质监测污染物定义库
 
 from __future__ import annotations
 
+import json
+import os
+from functools import lru_cache
 from typing import Any, TypedDict
 
 
@@ -149,9 +152,95 @@ POLLUTANT_MAP: dict[str, PollutantInfo] = {
 }
 
 
+# 默认厂商私有/历史编码别名映射到标准 HJ212 编码
+DEFAULT_POLLUTANT_CODE_ALIASES: dict[str, str] = {
+    "b01": "w00000",  # 部分数采仪将瞬时流量上报为 B01
+}
+
+
+def _parse_aliases_from_string(raw_aliases: str) -> dict[str, str]:
+    """Parse alias mapping from JSON or simple `a=b,c=d` format."""
+    value = (raw_aliases or "").strip()
+    if not value:
+        return {}
+
+    # Preferred format: JSON object, e.g. {"b01": "w00000"}
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, dict):
+            result: dict[str, str] = {}
+            for alias_code, target_code in parsed.items():
+                alias = str(alias_code).strip().lower()
+                target = str(target_code).strip().lower()
+                if alias and target:
+                    result[alias] = target
+            return result
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    # Fallback format: b01=w00000,b02=w00001
+    result: dict[str, str] = {}
+    for pair in value.split(","):
+        alias_code, separator, target_code = pair.partition("=")
+        if separator != "=":
+            continue
+        alias = alias_code.strip().lower()
+        target = target_code.strip().lower()
+        if alias and target:
+            result[alias] = target
+    return result
+
+
+@lru_cache(maxsize=1)
+def get_pollutant_code_aliases() -> dict[str, str]:
+    """Get effective alias mapping from defaults + environment overrides.
+
+    Environment variable:
+    - POLLUTANT_CODE_ALIASES
+      - JSON object: {"b01":"w00000","f01":"w00000"}
+      - or simple pairs: b01=w00000,f01=w00000
+    """
+    aliases = dict(DEFAULT_POLLUTANT_CODE_ALIASES)
+    configured_aliases = _parse_aliases_from_string(os.getenv("POLLUTANT_CODE_ALIASES", ""))
+    aliases.update(configured_aliases)
+    return aliases
+
+
 # ============================================================================
 # 辅助函数
 # ============================================================================
+
+def normalize_pollutant_code(code: str) -> str:
+    """Normalize pollutant code to canonical HJ212 code when possible."""
+    normalized = (code or "").strip().lower()
+    return get_pollutant_code_aliases().get(normalized, normalized)
+
+
+def get_pollutant_code_candidates(code: str) -> list[str]:
+    """Get all equivalent code candidates for DB query filtering."""
+    raw_code = (code or "").strip()
+    if not raw_code:
+        return []
+
+    lower_code = raw_code.lower()
+    canonical_code = normalize_pollutant_code(lower_code)
+
+    candidates: list[str] = []
+
+    def _add(candidate: str) -> None:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    _add(raw_code)
+    _add(lower_code)
+    _add(canonical_code)
+
+    for alias_code, target_code in get_pollutant_code_aliases().items():
+        if target_code == canonical_code:
+            _add(alias_code)
+            _add(alias_code.upper())
+
+    return candidates
 
 def get_pollutant_info(code: str) -> PollutantInfo | None:
     """
@@ -163,7 +252,8 @@ def get_pollutant_info(code: str) -> PollutantInfo | None:
     Returns:
         污染物信息字典，不存在返回 None
     """
-    return POLLUTANT_MAP.get(code.lower())
+    normalized_code = normalize_pollutant_code(code)
+    return POLLUTANT_MAP.get(normalized_code)
 
 
 def get_pollutant_name(code: str) -> str:
@@ -187,7 +277,7 @@ def get_all_pollutant_codes() -> list[str]:
 
 def is_known_pollutant(code: str) -> bool:
     """判断是否为已知污染物编码"""
-    return code.lower() in POLLUTANT_MAP
+    return normalize_pollutant_code(code) in POLLUTANT_MAP
 
 
 def format_value(code: str, value: float) -> str:
@@ -217,7 +307,7 @@ def get_pollutant_column_name(code: str) -> str:
         列名 (如 'w01018')
     """
     # HJ 212 编码已经是有效的SQL标识符格式
-    return code.lower()
+    return normalize_pollutant_code(code)
 
 
 def get_tdengine_columns_definition() -> str:

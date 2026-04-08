@@ -85,11 +85,10 @@ export const POLLUTANT_OPTIONS = {
     { code: 'w21011', name: '总氮', unit: 'mg/L', defaultWarning: 12, defaultAlarm: 15 },
   ],
   air: [
-    { code: 'a34004', name: 'PM2.5', unit: 'ug/m³', defaultWarning: 55, defaultAlarm: 75 },
-    { code: 'a34002', name: 'PM10', unit: 'ug/m³', defaultWarning: 120, defaultAlarm: 150 },
-    { code: 'a21004', name: 'NO2', unit: 'ug/m³', defaultWarning: 160, defaultAlarm: 200 },
-    { code: 'a21026', name: 'SO2', unit: 'ug/m³', defaultWarning: 400, defaultAlarm: 500 },
-    { code: 'a05024', name: 'O3', unit: 'ug/m³', defaultWarning: 160, defaultAlarm: 200 },
+    { code: 'a21026', name: 'SO2', unit: 'mg/m³', defaultWarning: 80, defaultAlarm: 100 },
+    { code: 'a21002', name: 'NOx', unit: 'mg/m³', defaultWarning: 80, defaultAlarm: 100 },
+    { code: 'a34013', name: '颗粒物', unit: 'mg/m³', defaultWarning: 24, defaultAlarm: 30 },
+    { code: 'a19001', name: '烟气黑度', unit: '级', defaultWarning: 0.8, defaultAlarm: 1 },
   ],
   noise: [
     { code: 'e01001', name: '噪声', unit: 'dB(A)', defaultWarning: 55, defaultAlarm: 65 },

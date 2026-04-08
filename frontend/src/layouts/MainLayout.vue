@@ -7,6 +7,7 @@ import {
   Monitor,
   DataLine,
   Bell,
+  VideoCamera,
   Document,
   Setting,
   ArrowDown,
@@ -26,6 +27,7 @@ const baseMenuItems = [
   { path: '/devices', icon: Monitor, title: '设备管理' },
   { path: '/data', icon: DataLine, title: '数据查询' },
   { path: '/alarms', icon: Bell, title: '告警管理' },
+  { path: '/video', icon: VideoCamera, title: '视频联动' },
   { path: '/reports', icon: Document, title: '报表中心' },
   { path: '/self-inspection', icon: FolderOpened, title: '文档数据' },
   { path: '/settings', icon: Setting, title: '系统设置' }

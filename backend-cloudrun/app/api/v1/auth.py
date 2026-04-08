@@ -14,7 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -57,14 +57,20 @@ async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> LoginResponse:
-    """Authenticate user and return JWT token.
+    """Authenticate user by username or email and return JWT token.
 
     Rate limited to 5 attempts per minute per IP to prevent brute force attacks.
     """
-    # Trim username to handle accidental whitespace
-    username = form_data.username.strip()
+    # Trim login identifier to handle accidental whitespace.
+    login_identifier = form_data.username.strip()
+    normalized_email = login_identifier.lower()
     result = await db.execute(
-        select(User).where(User.username == username)
+        select(User).where(
+            or_(
+                User.username == login_identifier,
+                func.lower(User.email) == normalized_email,
+            )
+        )
     )
     user = result.scalar_one_or_none()
 

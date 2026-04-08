@@ -22,9 +22,11 @@ from app.db.postgres import AsyncSessionLocal
 from app.models.alarm import Alarm, AlarmType, AlarmLevel, AlarmStatus
 from app.models.device import Device, ThresholdConfig, PollutantThreshold
 from app.services.notification import TencentSMSNotifier
+from app.services.openclaw_webhook import get_openclaw_webhook_notifier
 
 logger = structlog.get_logger()
 _sms_notifier = TencentSMSNotifier()
+_openclaw_webhook_notifier = get_openclaw_webhook_notifier()
 
 # Pollutant code to name mapping
 POLLUTANT_NAMES = {
@@ -201,6 +203,200 @@ class AlarmService:
             alarm.sms_sent_count = 1 if variant == "first" else 2
             alarm.last_sms_time = datetime.utcnow()
             await session.commit()
+
+    async def _maybe_push_openclaw_webhook(
+        self,
+        alarm: Alarm,
+        device: Device | None,
+    ) -> None:
+        """Push alarm to OpenClaw webhook. Errors are swallowed to avoid blocking alarm flow."""
+        try:
+            await _openclaw_webhook_notifier.notify_alarm(alarm=alarm, device=device)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.error(
+                "OpenClaw webhook push failed unexpectedly",
+                alarm_id=str(alarm.id),
+                error=str(exc),
+            )
+
+    def _map_alarm_status_to_video_status(self, alarm_status: str) -> str:
+        """Map alarm workflow status to video-event workflow status."""
+        from app.models.video import VideoEventStatus
+
+        status_map = {
+            AlarmStatus.PENDING.value: VideoEventStatus.PENDING.value,
+            AlarmStatus.ACKNOWLEDGED.value: VideoEventStatus.ACKNOWLEDGED.value,
+            AlarmStatus.RESOLVED.value: VideoEventStatus.RESOLVED.value,
+        }
+        return status_map.get(alarm_status, VideoEventStatus.PENDING.value)
+
+    def _map_alarm_level_to_video_level(self, alarm_level: str) -> str:
+        """Map alarm severity to video-event severity."""
+        from app.models.video import VideoEventLevel
+
+        level_map = {
+            AlarmLevel.INFO.value: VideoEventLevel.INFO.value,
+            AlarmLevel.WARNING.value: VideoEventLevel.WARNING.value,
+            AlarmLevel.CRITICAL.value: VideoEventLevel.CRITICAL.value,
+        }
+        return level_map.get(alarm_level, VideoEventLevel.WARNING.value)
+
+    async def _ensure_video_linkage_events(
+        self,
+        session: AsyncSession,
+        alarm: Alarm,
+        device: Device | None,
+    ) -> int:
+        """Ensure one linked video event exists per selected video channel.
+
+        Strategy:
+        - Prefer AI-enabled channels if present
+        - Otherwise fall back to all channels bound to the same monitoring device
+        - One alarm produces at most one linked video event per channel
+        """
+        from app.models.video import (
+            VideoChannel,
+            VideoEvent,
+            VideoEventSource,
+            VideoEventType,
+        )
+
+        if device is None:
+            return 0
+
+        channels_result = await session.execute(
+            select(VideoChannel)
+            .where(VideoChannel.device_id == alarm.device_id)
+            .order_by(VideoChannel.ai_enabled.desc(), VideoChannel.created_at.asc())
+        )
+        channels = channels_result.scalars().all()
+        if not channels:
+            return 0
+
+        target_channels = [channel for channel in channels if channel.ai_enabled] or channels
+
+        existing_result = await session.execute(
+            select(VideoEvent.channel_id).where(VideoEvent.related_alarm_id == alarm.id)
+        )
+        existing_channel_ids = {row[0] for row in existing_result.fetchall()}
+
+        created_count = 0
+        alarm_desc = self._describe_alarm(alarm)
+        title = f"告警联动：{device.name or device.mn} {alarm_desc}"
+        summary = f"由告警自动生成的视频联动事件。原始告警信息：{alarm.message}"
+
+        extra_data = {
+            "alarm_id": str(alarm.id),
+            "alarm_type": alarm.alarm_type,
+            "alarm_level": alarm.level,
+            "alarm_status": alarm.status,
+            "device_name": device.name,
+            "device_mn": device.mn,
+            "pollutant_code": alarm.pollutant_code,
+            "alarm_value": alarm.value,
+            "threshold": alarm.threshold,
+        }
+
+        for channel in target_channels:
+            if channel.id in existing_channel_ids:
+                continue
+
+            event = VideoEvent(
+                org_id=channel.org_id,
+                channel_id=channel.id,
+                device_id=channel.device_id,
+                device_mn=channel.device_mn,
+                related_alarm_id=alarm.id,
+                event_type=VideoEventType.AI_LINKAGE.value,
+                source=VideoEventSource.AI_LINKAGE.value,
+                level=self._map_alarm_level_to_video_level(alarm.level),
+                status=self._map_alarm_status_to_video_status(alarm.status),
+                title=title,
+                summary=summary,
+                occurred_at=alarm.created_at or datetime.utcnow(),
+                extra_data=json.dumps(extra_data, ensure_ascii=False),
+            )
+            session.add(event)
+            created_count += 1
+
+        if created_count:
+            await session.commit()
+            logger.info(
+                "Video linkage events created for alarm",
+                alarm_id=str(alarm.id),
+                device_id=str(alarm.device_id),
+                created_count=created_count,
+            )
+        return created_count
+
+    async def sync_video_events_with_alarm(
+        self,
+        alarm: Alarm,
+        *,
+        device: Device | None = None,
+    ) -> int:
+        """Sync linked video events to current alarm status and create missing linkage events."""
+        from app.models.video import VideoEvent, VideoEventStatus
+
+        session = await self._get_session()
+        try:
+            current_device = device
+            if current_device is None:
+                current_device = await self._get_device_with_org(session, alarm.device_id)
+
+            await self._ensure_video_linkage_events(session, alarm, current_device)
+
+            result = await session.execute(
+                select(VideoEvent).where(VideoEvent.related_alarm_id == alarm.id)
+            )
+            events = result.scalars().all()
+            if not events:
+                return 0
+
+            target_status = self._map_alarm_status_to_video_status(alarm.status)
+            updated_count = 0
+
+            for event in events:
+                if target_status == VideoEventStatus.ACKNOWLEDGED.value:
+                    if event.status == VideoEventStatus.PENDING.value:
+                        event.status = target_status
+                        updated_count += 1
+                elif target_status == VideoEventStatus.RESOLVED.value:
+                    if event.status != VideoEventStatus.RESOLVED.value:
+                        event.status = target_status
+                        updated_count += 1
+
+                if event.extra_data:
+                    try:
+                        payload = json.loads(event.extra_data)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        payload = {}
+                else:
+                    payload = {}
+                payload["alarm_status"] = alarm.status
+                event.extra_data = json.dumps(payload, ensure_ascii=False)
+
+            if updated_count:
+                await session.commit()
+                logger.info(
+                    "Linked video events synced with alarm",
+                    alarm_id=str(alarm.id),
+                    target_status=target_status,
+                    updated_count=updated_count,
+                )
+
+            return updated_count
+        except Exception as exc:
+            logger.error(
+                "Failed to sync linked video events with alarm",
+                alarm_id=str(alarm.id),
+                error=str(exc),
+            )
+            await session.rollback()
+            return 0
+        finally:
+            await self._close_session(session)
+
     async def create_threshold_alarm(
         self,
         device_id: UUID,
@@ -235,6 +431,7 @@ class AlarmService:
                 await self._update_active_alarm(session, active_alarm, value=value_str)
                 device = await self._get_device_with_org(session, device_id)
                 if device:
+                    await self._ensure_video_linkage_events(session, active_alarm, device)
                     await self._maybe_send_followup_sms(
                         session,
                         active_alarm,
@@ -293,6 +490,7 @@ class AlarmService:
 
             device = await self._get_device_with_org(session, device_id)
             if device:
+                await self._ensure_video_linkage_events(session, alarm, device)
                 await self._maybe_send_initial_sms(
                     session,
                     alarm,
@@ -300,6 +498,8 @@ class AlarmService:
                     level,
                     current_value=value_str,
                 )
+
+            await self._maybe_push_openclaw_webhook(alarm=alarm, device=device)
 
             return alarm
 
@@ -337,6 +537,13 @@ class AlarmService:
         session = await self._get_session()
         try:
             value_str = f"{value:.2f}"
+            pollutant_name = get_pollutant_name(pollutant_code)
+            message = (
+                f"AI妫€娴嬪埌璁惧 {device_mn} 鐨?{pollutant_name} 鏁版嵁寮傚父锛?"
+                f"绫诲瀷: {anomaly_type}, 寮傚父鍒嗘暟: {anomaly_score:.2f}"
+            )
+            if reason:
+                message += f"\n鍘熷洜: {reason}"
 
             active_alarm = await self._find_active_alarm(
                 session, device_id, AlarmType.ANOMALY, pollutant_code
@@ -350,6 +557,7 @@ class AlarmService:
                 )
                 device = await self._get_device_with_org(session, device_id)
                 if device:
+                    await self._ensure_video_linkage_events(session, active_alarm, device)
                     await self._maybe_send_followup_sms(
                         session,
                         active_alarm,
@@ -410,6 +618,7 @@ class AlarmService:
 
             device = await self._get_device_with_org(session, device_id)
             if device:
+                await self._ensure_video_linkage_events(session, alarm, device)
                 await self._maybe_send_initial_sms(
                     session,
                     alarm,
@@ -417,6 +626,8 @@ class AlarmService:
                     level,
                     current_value=value_str,
                 )
+
+            await self._maybe_push_openclaw_webhook(alarm=alarm, device=device)
 
             return alarm
 
@@ -455,6 +666,9 @@ class AlarmService:
             )
             if active_alarm:
                 await self._update_active_alarm(session, active_alarm, message=message)
+                device = await self._get_device_with_org(session, device_id)
+                if device:
+                    await self._ensure_video_linkage_events(session, active_alarm, device)
                 return active_alarm
 
             if await self._has_recent_alarm(
@@ -482,6 +696,11 @@ class AlarmService:
                 device_mn=device_mn,
             )
 
+            device = await self._get_device_with_org(session, device_id)
+            if device:
+                await self._ensure_video_linkage_events(session, alarm, device)
+            await self._maybe_push_openclaw_webhook(alarm=alarm, device=device)
+
             return alarm
 
         except Exception as e:
@@ -499,10 +718,20 @@ class AlarmService:
     ) -> int:
         """Resolve all active offline alarms for a device."""
         from sqlalchemy import update
+        from app.models.video import VideoEvent, VideoEventStatus
 
         session = await self._get_session()
         try:
             ts = resolved_at or datetime.utcnow()
+            alarms_result = await session.execute(
+                select(Alarm.id).where(
+                    Alarm.device_id == device_id,
+                    Alarm.alarm_type == AlarmType.OFFLINE.value,
+                    Alarm.status != AlarmStatus.RESOLVED.value,
+                )
+            )
+            alarm_ids = [row[0] for row in alarms_result.fetchall()]
+
             result = await session.execute(
                 update(Alarm)
                 .where(
@@ -512,6 +741,17 @@ class AlarmService:
                 )
                 .values(status=AlarmStatus.RESOLVED.value, resolved_at=ts, updated_at=ts)
             )
+
+            if alarm_ids:
+                await session.execute(
+                    update(VideoEvent)
+                    .where(
+                        VideoEvent.related_alarm_id.in_(alarm_ids),
+                        VideoEvent.status != VideoEventStatus.RESOLVED.value,
+                    )
+                    .values(status=VideoEventStatus.RESOLVED.value, updated_at=ts)
+                )
+
             await session.commit()
             return int(getattr(result, "rowcount", 0) or 0)
         except Exception as e:
@@ -544,6 +784,10 @@ class AlarmService:
         session = await self._get_session()
         try:
             value_str = f"{value:.2f}"
+            message = (
+                f"Flag anomaly detected on device {device_mn}, pollutant {pollutant_code}, "
+                f"flag={flag}, value={value:.2f}"
+            )
             active_alarm = await self._find_active_alarm(
                 session, device_id, AlarmType.FLAG, pollutant_code
             )
@@ -554,6 +798,9 @@ class AlarmService:
                     value=value_str,
                     message=message,
                 )
+                device = await self._get_device_with_org(session, device_id)
+                if device:
+                    await self._ensure_video_linkage_events(session, active_alarm, device)
                 return active_alarm
 
             if await self._has_recent_alarm(
@@ -599,6 +846,11 @@ class AlarmService:
                 pollutant_code=pollutant_code,
                 flag=flag,
             )
+
+            device = await self._get_device_with_org(session, device_id)
+            if device:
+                await self._ensure_video_linkage_events(session, alarm, device)
+            await self._maybe_push_openclaw_webhook(alarm=alarm, device=device)
 
             return alarm
 

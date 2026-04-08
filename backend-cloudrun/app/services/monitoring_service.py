@@ -17,7 +17,11 @@ from app.models.monitoring_mysql import (
     MonitoringDailyStats,
     MonitoringHourlyStats,
 )
-from app.core.pollutant_library import get_pollutant_info
+from app.core.pollutant_library import (
+    get_pollutant_info,
+    get_pollutant_code_candidates,
+    normalize_pollutant_code,
+)
 
 logger = structlog.get_logger()
 
@@ -43,9 +47,11 @@ class MonitoringService:
     ) -> bool:
         """插入单条监测数据"""
         try:
+            normalized_code = normalize_pollutant_code(pollutant_code)
+
             # 获取污染物名称
             if not pollutant_name:
-                pol_info = get_pollutant_info(pollutant_code)
+                pol_info = get_pollutant_info(normalized_code)
                 pollutant_name = pol_info.get("name") if pol_info else None
 
             data = MonitoringDataMySQL(
@@ -53,7 +59,7 @@ class MonitoringService:
                 device_id=device_id,
                 device_name=device_name,
                 org_id=org_id,
-                pollutant_code=pollutant_code,
+                pollutant_code=normalized_code,
                 pollutant_name=pollutant_name,
                 value=value,
                 flag=flag,
@@ -66,7 +72,7 @@ class MonitoringService:
             logger.debug(
                 "Inserted monitoring data",
                 device_id=device_id,
-                pollutant_code=pollutant_code,
+                pollutant_code=normalized_code,
                 value=value,
             )
             return True
@@ -93,10 +99,12 @@ class MonitoringService:
         try:
             records = []
             for item in data_list:
+                normalized_code = normalize_pollutant_code(item["pollutant_code"])
+
                 # 获取污染物名称
                 pollutant_name = item.get("pollutant_name")
                 if not pollutant_name:
-                    pol_info = get_pollutant_info(item["pollutant_code"])
+                    pol_info = get_pollutant_info(normalized_code)
                     pollutant_name = pol_info.get("name") if pol_info else None
 
                 records.append(MonitoringDataMySQL(
@@ -104,7 +112,7 @@ class MonitoringService:
                     device_id=item["device_id"],
                     device_name=item.get("device_name"),
                     org_id=item["org_id"],
-                    pollutant_code=item["pollutant_code"],
+                    pollutant_code=normalized_code,
                     pollutant_name=pollutant_name,
                     value=item["value"],
                     flag=item.get("flag", "N"),
@@ -145,7 +153,9 @@ class MonitoringService:
             if org_id:
                 conditions.append(MonitoringDataMySQL.org_id == org_id)
             if pollutant_code:
-                conditions.append(MonitoringDataMySQL.pollutant_code == pollutant_code)
+                candidate_codes = get_pollutant_code_candidates(pollutant_code)
+                if candidate_codes:
+                    conditions.append(MonitoringDataMySQL.pollutant_code.in_(candidate_codes))
             if start_time:
                 conditions.append(MonitoringDataMySQL.ts >= start_time)
             if end_time:
@@ -161,22 +171,27 @@ class MonitoringService:
             result = await self.db.execute(query)
             records = result.scalars().all()
 
-            return [
-                {
-                    "id": r.id,
-                    "ts": r.ts,
-                    "device_id": r.device_id,
-                    "device_name": r.device_name,
-                    "org_id": r.org_id,
-                    "pollutant_code": r.pollutant_code,
-                    "pollutant_name": r.pollutant_name,
-                    "value": r.value,
-                    "flag": r.flag,
-                    "status": r.status,
-                    "data_type": r.data_type,
-                }
-                for r in records
-            ]
+            normalized_records: List[Dict[str, Any]] = []
+            for record in records:
+                normalized_code = normalize_pollutant_code(record.pollutant_code)
+                pol_info = get_pollutant_info(normalized_code)
+                normalized_records.append(
+                    {
+                        "id": record.id,
+                        "ts": record.ts,
+                        "device_id": record.device_id,
+                        "device_name": record.device_name,
+                        "org_id": record.org_id,
+                        "pollutant_code": normalized_code,
+                        "pollutant_name": record.pollutant_name or (pol_info.get("name") if pol_info else None),
+                        "value": record.value,
+                        "flag": record.flag,
+                        "status": record.status,
+                        "data_type": record.data_type,
+                    }
+                )
+
+            return normalized_records
 
         except Exception as e:
             logger.error("Failed to query monitoring data", error=str(e))
@@ -212,7 +227,9 @@ class MonitoringService:
             if org_id:
                 conditions.append(MonitoringDataMySQL.org_id == org_id)
             if pollutant_code:
-                conditions.append(MonitoringDataMySQL.pollutant_code == pollutant_code)
+                candidate_codes = get_pollutant_code_candidates(pollutant_code)
+                if candidate_codes:
+                    conditions.append(MonitoringDataMySQL.pollutant_code.in_(candidate_codes))
 
             if conditions:
                 subquery = subquery.where(and_(*conditions))
@@ -235,18 +252,27 @@ class MonitoringService:
             result = await self.db.execute(query)
             records = result.scalars().all()
 
-            return [
-                {
-                    "ts": r.ts,
-                    "device_id": r.device_id,
-                    "device_name": r.device_name,
-                    "pollutant_code": r.pollutant_code,
-                    "pollutant_name": r.pollutant_name,
-                    "value": r.value,
-                    "flag": r.flag,
+            latest_by_device_pollutant: Dict[tuple[str, str], Dict[str, Any]] = {}
+            for record in records:
+                normalized_code = normalize_pollutant_code(record.pollutant_code)
+                key = (record.device_id, normalized_code)
+                existing = latest_by_device_pollutant.get(key)
+
+                if existing is not None and existing["ts"] >= record.ts:
+                    continue
+
+                pol_info = get_pollutant_info(normalized_code)
+                latest_by_device_pollutant[key] = {
+                    "ts": record.ts,
+                    "device_id": record.device_id,
+                    "device_name": record.device_name,
+                    "pollutant_code": normalized_code,
+                    "pollutant_name": record.pollutant_name or (pol_info.get("name") if pol_info else None),
+                    "value": record.value,
+                    "flag": record.flag,
                 }
-                for r in records
-            ]
+
+            return list(latest_by_device_pollutant.values())
 
         except Exception as e:
             logger.error("Failed to get latest values", error=str(e))
@@ -261,6 +287,8 @@ class MonitoringService:
     ) -> Dict[str, Any]:
         """获取统计数据"""
         try:
+            normalized_pollutant_code = normalize_pollutant_code(pollutant_code) if pollutant_code else None
+
             query = select(
                 func.min(MonitoringDataMySQL.value).label("min_value"),
                 func.max(MonitoringDataMySQL.value).label("max_value"),
@@ -269,7 +297,9 @@ class MonitoringService:
             ).where(MonitoringDataMySQL.device_id == device_id)
 
             if pollutant_code:
-                query = query.where(MonitoringDataMySQL.pollutant_code == pollutant_code)
+                candidate_codes = get_pollutant_code_candidates(pollutant_code)
+                if candidate_codes:
+                    query = query.where(MonitoringDataMySQL.pollutant_code.in_(candidate_codes))
             if start_time:
                 query = query.where(MonitoringDataMySQL.ts >= start_time)
             if end_time:
@@ -281,7 +311,7 @@ class MonitoringService:
             if row:
                 return {
                     "device_id": device_id,
-                    "pollutant_code": pollutant_code or "all",
+                    "pollutant_code": normalized_pollutant_code or "all",
                     "min_value": float(row.min_value) if row.min_value else None,
                     "max_value": float(row.max_value) if row.max_value else None,
                     "avg_value": float(row.avg_value) if row.avg_value else None,

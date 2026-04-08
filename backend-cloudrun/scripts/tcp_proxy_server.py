@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import asyncio, os, sys, signal, logging
+import asyncio, os, sys, signal, logging, base64
 from datetime import datetime
 import aiohttp
 
@@ -32,7 +32,7 @@ class TCPToHTTPProxy:
                 logger.info(f"收到: {raw[:80]}...")
                 url = f"{CLOUDBASE_API_URL}/api/v1/gateway/hj212"
                 headers = {"Content-Type": "application/json", "X-Gateway-Key": GATEWAY_API_KEY}
-                payload = {"raw_data": raw, "source_ip": addr[0]}
+                payload = {"raw_data": raw, "raw_data_base64": base64.b64encode(data).decode("ascii"), "source_ip": addr[0]}
                 async with self._session.post(url, json=payload, headers=headers) as resp:
                     if resp.status == 200:
                         result = await resp.json()

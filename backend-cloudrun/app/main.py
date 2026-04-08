@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.core.rate_limiter import limiter
 from app.db.postgres import init_db, close_db
 from app.api.v1.router import api_router
+from app.api.openapi.router import openapi_router
 from app.services.scheduler import setup_scheduler, start_scheduler, stop_scheduler
 from app.services.default_users import ensure_default_users
 
@@ -115,6 +116,9 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
+
+# Include OpenAPI routes for external agent integrations (API Key auth)
+app.include_router(openapi_router, prefix="/openapi")
 
 
 @app.exception_handler(RequestValidationError)

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { alarmApi, type Alarm } from '@/api/alarms'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
+const router = useRouter()
 const loading = ref(false)
 const alarms = ref<Alarm[]>([])
 const statusFilter = ref('')
@@ -134,6 +136,16 @@ const getStatusLabel = (status: string) => {
   return labels[status] || status
 }
 
+const openVideoLinkage = (alarm: Alarm) => {
+  router.push({
+    path: '/video',
+    query: {
+      device_id: alarm.device_id,
+      alarm_id: alarm.id
+    }
+  })
+}
+
 onMounted(loadAlarms)
 </script>
 
@@ -203,8 +215,11 @@ onMounted(loadAlarms)
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
+            <el-button link type="primary" @click="openVideoLinkage(row)">
+              视频联动
+            </el-button>
             <el-button
               v-if="row.status === 'pending'"
               type="primary"

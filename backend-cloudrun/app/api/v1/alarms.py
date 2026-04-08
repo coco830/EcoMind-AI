@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,8 +17,11 @@ from app.models.alarm import Alarm, AlarmCreate, AlarmResponse, AlarmStatus, Ala
 from app.models.device import Device
 from app.models.user import User
 from app.api.deps import get_current_active_user, require_superadmin, can_cross_tenant_read
+from app.services.openclaw_webhook import get_openclaw_webhook_notifier
+from app.services.alarm_service import AlarmService
 
 router = APIRouter()
+logger = structlog.get_logger()
 
 
 def _build_org_filter_query(query, current_user: User, join_device: bool = True):
@@ -165,6 +169,7 @@ async def create_alarm(
     alarm_data: AlarmCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superadmin)],
+    notify_openclaw: bool = Query(True, description="是否触发 OpenClaw webhook 推送"),
 ) -> AlarmResponse:
     """Create a new alarm manually."""
     alarm = Alarm(
@@ -179,6 +184,39 @@ async def create_alarm(
     db.add(alarm)
     await db.flush()
     await db.refresh(alarm)
+
+    if notify_openclaw:
+        try:
+            device_result = await db.execute(
+                select(Device)
+                .options(selectinload(Device.organization))
+                .where(Device.id == alarm.device_id)
+                .limit(1)
+            )
+            device = device_result.scalar_one_or_none()
+            notifier = get_openclaw_webhook_notifier()
+            pushed = await notifier.notify_alarm(alarm, device)
+            logger.info(
+                "Manual alarm webhook push attempted",
+                alarm_id=str(alarm.id),
+                pushed=pushed,
+                notify_openclaw=notify_openclaw,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Manual alarm webhook push failed",
+                alarm_id=str(alarm.id),
+                error=str(exc),
+            )
+
+    device_result = await db.execute(
+        select(Device)
+        .options(selectinload(Device.organization))
+        .where(Device.id == alarm.device_id)
+        .limit(1)
+    )
+    device = device_result.scalar_one_or_none()
+    await AlarmService(db).sync_video_events_with_alarm(alarm, device=device)
 
     return AlarmResponse.model_validate(alarm)
 
@@ -217,6 +255,7 @@ async def acknowledge_alarm(
     alarm.acknowledged_at = datetime.utcnow()
 
     await db.flush()
+    await AlarmService(db).sync_video_events_with_alarm(alarm, device=alarm.device)
     await db.refresh(alarm)
 
     return AlarmResponse.model_validate(alarm)
@@ -255,6 +294,7 @@ async def resolve_alarm(
     alarm.resolved_at = datetime.utcnow()
 
     await db.flush()
+    await AlarmService(db).sync_video_events_with_alarm(alarm, device=alarm.device)
     await db.refresh(alarm)
 
     return AlarmResponse.model_validate(alarm)

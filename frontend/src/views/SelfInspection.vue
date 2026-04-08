@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { AxiosError } from 'axios'
 import {
   Upload,
   Document,
@@ -27,6 +28,7 @@ import {
   type OCRUploadResponse,
   type TrendAnalysisResponse,
   type AIReportResponse,
+  type OpsBriefListItem,
   type InspectionStatus
 } from '@/api/selfInspection'
 import { organizationApi, type Organization } from '@/api/organizations'
@@ -70,6 +72,8 @@ const uploadForm = reactive({
 const uploadFileList = ref<UploadFile[]>()
 const ocrProgressVisible = ref(false)
 const ocrProgressSteps = ref<{ step: string; status: 'process' | 'success' | 'error' }[]>([])
+const MAX_UPLOAD_SIZE_BYTES = 19 * 1024 * 1024
+const RECOMMENDED_UPLOAD_SIZE_BYTES = 19 * 1024 * 1024
 
 // Verify dialog
 const verifyDialogVisible = ref(false)
@@ -90,7 +94,11 @@ const aiReportDateRange = ref<[Date, Date] | null>(null)
 const aiReportType = ref<'monthly' | 'quarterly'>('monthly')
 const aiReport = ref<AIReportResponse | null>(null)
 const aiReportIncludeFlow = ref(false)
+const aiReportIncludeAirOnline = ref(false)
 const aiReportCalculateLoad = ref(false)
+const opsBriefGenerating = ref(false)
+const opsBriefHistoryLoading = ref(false)
+const opsBriefHistory = ref<OpsBriefListItem[]>([])
 
 // ============== Computed ==============
 const statusOptions = [
@@ -220,10 +228,13 @@ const handleFileChange = (file: UploadFile) => {
       uploadFileList.value = []
       return
     }
-    if (file.raw.size > 20 * 1024 * 1024) {
-      ElMessage.warning('文件大小不能超过 20MB')
+    if (file.raw.size > MAX_UPLOAD_SIZE_BYTES) {
+      ElMessage.warning('文件大小不能超过 19MB（云托管网关限制）')
       uploadFileList.value = []
       return
+    }
+    if (file.raw.size > RECOMMENDED_UPLOAD_SIZE_BYTES) {
+      ElMessage.warning('文件接近网关上限，建议压缩到 19MB 以内，避免上传时报 Network Error')
     }
     uploadForm.file = file.raw
   }
@@ -327,7 +338,17 @@ const handleUpload = async () => {
     }, 800)
 
   } catch (error: unknown) {
-    const errMsg = error instanceof Error ? error.message : '上传失败'
+    let errMsg = error instanceof Error ? error.message : '上传失败'
+    const axiosError = error as AxiosError<{ detail?: string }>
+
+    if (axiosError?.response?.status === 413) {
+      errMsg = '上传失败：文件或请求体过大，请压缩后重试（建议 19MB 以内）'
+    } else if (axiosError?.code === 'ECONNABORTED') {
+      errMsg = '上传超时：OCR/AI 处理时间较长，请稍后重试或减小文件体积'
+    } else if (!axiosError?.response && uploadForm.file && uploadForm.file.size > RECOMMENDED_UPLOAD_SIZE_BYTES) {
+      errMsg = '上传失败：可能触发网关大小限制（浏览器可能显示为 CORS/Network Error），请压缩到 19MB 以内重试'
+    }
+
     ElMessage.error(errMsg)
     console.error(error)
 
@@ -561,40 +582,70 @@ const renderTrendChart = () => {
   trendChart.setOption(option)
 }
 
+const validateAIReportQuery = () => {
+  if (!aiReportDateRange.value) {
+    ElMessage.warning('请选择日期范围')
+    return false
+  }
+
+  if (canSelectTargetOrg.value && aiReportIncludeFlow.value && !selectedOrgId.value) {
+    ElMessage.warning('整合流量数据需要先在页面上方选择企业')
+    return false
+  }
+  if (canSelectTargetOrg.value && aiReportIncludeAirOnline.value && !selectedOrgId.value) {
+    ElMessage.warning('整合在线监测指标需要先在页面上方选择企业')
+    return false
+  }
+  return true
+}
+
+const loadOpsBriefHistory = async () => {
+  opsBriefHistoryLoading.value = true
+  try {
+    const result = await selfInspectionApi.listOpsBriefHistory({
+      target_org_id: selectedOrgId.value || undefined,
+      page: 1,
+      page_size: 20
+    })
+    opsBriefHistory.value = result.items
+  } catch (error) {
+    console.error('Failed to load ops brief history:', error)
+  } finally {
+    opsBriefHistoryLoading.value = false
+  }
+}
+
 // Show AI Report dialog
-const showAIReportDialog = () => {
+const showAIReportDialog = async () => {
   const end = new Date()
   const start = new Date()
   start.setMonth(start.getMonth() - 1)
   aiReportDateRange.value = [start, end]
   aiReportType.value = 'monthly'
   aiReport.value = null
-  // 默认开启整合在线数据：企业用户直接可用；平台人员若未选企业则默认关闭避免误操作
+  // 默认开启整合流量数据：企业用户直接可用；平台人员若未选企业则默认关闭避免误操作
   aiReportIncludeFlow.value = canSelectTargetOrg.value ? Boolean(selectedOrgId.value) : true
+  aiReportIncludeAirOnline.value = true
   aiReportCalculateLoad.value = false
   aiReportDialogVisible.value = true
+
+  await loadOpsBriefHistory()
 }
 
 // Generate AI Report
 const generateAIReport = async () => {
-  if (!aiReportDateRange.value) {
-    ElMessage.warning('请选择日期范围')
-    return
-  }
-
-  // 平台人员需要选择组织才能获取流量数据
-  if (canSelectTargetOrg.value && aiReportIncludeFlow.value && !selectedOrgId.value) {
-    ElMessage.warning('整合流量数据需要先在页面上方选择企业')
-    return
-  }
+  if (!validateAIReportQuery()) return
+  const dateRange = aiReportDateRange.value
+  if (!dateRange) return
 
   aiReportLoading.value = true
   try {
     const result = await selfInspectionApi.generateAIReport({
-      start_date: formatDate(aiReportDateRange.value[0]),
-      end_date: formatDate(aiReportDateRange.value[1]),
+      start_date: formatDate(dateRange[0]),
+      end_date: formatDate(dateRange[1]),
       report_type: aiReportType.value,
       include_flow_data: aiReportIncludeFlow.value,
+      include_air_online_data: aiReportIncludeAirOnline.value,
       calculate_pollutant_load: aiReportCalculateLoad.value,
       target_org_id: selectedOrgId.value || undefined  // 平台人员按企业过滤
     })
@@ -606,6 +657,71 @@ const generateAIReport = async () => {
     console.error(error)
   } finally {
     aiReportLoading.value = false
+  }
+}
+
+const generateAndArchiveOpsBrief = async () => {
+  if (aiReportType.value !== 'monthly') {
+    ElMessage.warning('运维简报仅支持月度类型，请切换为“月报”')
+    return
+  }
+  if (canSelectTargetOrg.value && !selectedOrgId.value) {
+    ElMessage.warning('请先选择目标企业后再生成月度运维简报')
+    return
+  }
+  if (!validateAIReportQuery()) return
+  const dateRange = aiReportDateRange.value
+  if (!dateRange) return
+
+  opsBriefGenerating.value = true
+  try {
+    const result = await selfInspectionApi.generateOpsBrief({
+      start_date: formatDate(dateRange[0]),
+      end_date: formatDate(dateRange[1]),
+      include_flow_data: aiReportIncludeFlow.value,
+      include_air_online_data: true,
+      calculate_pollutant_load: aiReportCalculateLoad.value,
+      target_org_id: selectedOrgId.value || undefined
+    })
+
+    aiReport.value = result
+    ElMessage.success('月度运维简报已生成并归档')
+    await loadOpsBriefHistory()
+  } catch (error) {
+    ElMessage.error('生成运维简报失败')
+    console.error(error)
+  } finally {
+    opsBriefGenerating.value = false
+  }
+}
+
+const viewArchivedOpsBrief = async (briefId: string) => {
+  opsBriefGenerating.value = true
+  try {
+    const detail = await selfInspectionApi.getOpsBrief(briefId)
+    aiReport.value = detail
+  } catch (error) {
+    ElMessage.error('加载归档简报失败')
+    console.error(error)
+  } finally {
+    opsBriefGenerating.value = false
+  }
+}
+
+const downloadOpsBriefPdf = async (briefId: string) => {
+  try {
+    const { blob, filename } = await selfInspectionApi.downloadOpsBriefPdf(briefId)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    ElMessage.error('下载简报PDF失败')
+    console.error(error)
   }
 }
 
@@ -655,6 +771,9 @@ watch(selectedOrgId, () => {
   currentPage.value = 1
   // 重新加载报告列表
   loadReports()
+  if (aiReportDialogVisible.value) {
+    loadOpsBriefHistory()
+  }
 })
 
 // Cleanup
@@ -902,7 +1021,7 @@ const handleTrendDialogClose = () => {
               将文件拖到此处，或<em>点击上传</em>
             </div>
             <template #tip>
-              <div class="upload-tip">支持 PDF、JPG、PNG 格式，最大 20MB</div>
+              <div class="upload-tip">支持 PDF、JPG、PNG 格式，最大 19MB</div>
             </template>
           </el-upload>
         </el-form-item>
@@ -1205,12 +1324,18 @@ const handleTrendDialogClose = () => {
             <el-icon><MagicStick /></el-icon>
             生成报告
           </el-button>
+          <el-button type="success" :loading="opsBriefGenerating" @click="generateAndArchiveOpsBrief">
+            一键生成并归档简报
+          </el-button>
         </div>
 
         <!-- Flow Data Integration Options -->
         <div class="flow-options">
           <el-checkbox v-model="aiReportIncludeFlow" :disabled="aiReportLoading">
             整合瞬时流量数据
+          </el-checkbox>
+          <el-checkbox v-model="aiReportIncludeAirOnline" :disabled="aiReportLoading">
+            整合大气污染物在线指标
           </el-checkbox>
           <el-checkbox
             v-model="aiReportCalculateLoad"
@@ -1220,9 +1345,38 @@ const handleTrendDialogClose = () => {
           </el-checkbox>
           <div class="flow-options-tip">
             <el-icon><InfoFilled /></el-icon>
-            <span>流量数据来自数采仪（实时监测），检测数据来自第三方检测报告</span>
+            <span>流量数据用于负荷计算；大气在线指标用于标准对照解读</span>
           </div>
         </div>
+
+        <el-card shadow="never" class="brief-history-card">
+          <template #header>
+            <div class="brief-history-header">
+              <span>运维简报历史归档</span>
+              <el-button text type="primary" @click="loadOpsBriefHistory">刷新</el-button>
+            </div>
+          </template>
+
+          <el-table :data="opsBriefHistory" size="small" v-loading="opsBriefHistoryLoading" max-height="220">
+            <el-table-column prop="title" label="简报标题" min-width="220" show-overflow-tooltip />
+            <el-table-column label="周期" min-width="190">
+              <template #default="{ row }">
+                {{ row.start_date }} 至 {{ row.end_date }}
+              </template>
+            </el-table-column>
+            <el-table-column label="生成时间" min-width="170">
+              <template #default="{ row }">
+                {{ new Date(row.generated_at).toLocaleString('zh-CN') }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="170" fixed="right">
+              <template #default="{ row }">
+                <el-button text type="primary" @click="viewArchivedOpsBrief(row.id)">查看</el-button>
+                <el-button text type="success" @click="downloadOpsBriefPdf(row.id)">PDF</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
 
         <div v-if="aiReport" class="ai-report-result">
           <el-card shadow="never" class="report-card">
@@ -1235,7 +1389,7 @@ const handleTrendDialogClose = () => {
 
             <template v-if="aiReport.flow_data">
               <div class="report-flow">
-                <h4>在线数据摘要（数采仪）</h4>
+                <h4>流量数据摘要（数采仪）</h4>
                 <el-row :gutter="12">
                   <el-col :span="8">
                     <el-tag type="info" size="small">平均流量: {{ aiReport.flow_data.avg_flow.toFixed(2) }} L/s</el-tag>
@@ -1253,7 +1407,7 @@ const handleTrendDialogClose = () => {
 
             <template v-if="aiReport.online_data && aiReport.online_data.pollutants && aiReport.online_data.pollutants.length > 0">
               <div class="report-online">
-                <h4>在线监测指标概览（数采仪）</h4>
+                <h4>大气在线监测指标概览（数采仪）</h4>
                 <el-collapse>
                   <el-collapse-item
                     :title="`查看指标统计（${aiReport.online_data.pollutants.length}项）`"
@@ -1261,7 +1415,9 @@ const handleTrendDialogClose = () => {
                   >
                     <ul class="online-metrics-list">
                       <li v-for="p in aiReport.online_data.pollutants.slice(0, 12)" :key="p.pollutant_code">
-                        {{ p.pollutant_name }}（{{ p.pollutant_code }}）：均值 {{ p.avg ?? '-' }}{{ p.unit || '' }}，范围 {{ p.min ?? '-' }}-{{ p.max ?? '-' }}{{ p.unit || '' }}（{{ p.count }}点 / {{ p.device_count }}设备）
+                        {{ p.pollutant_name }}（{{ p.pollutant_code }}）：均值 {{ p.avg ?? '-' }}{{ p.unit || '' }}
+                        <template v-if="p.standard_limit !== null && p.standard_limit !== undefined">，参考限值 {{ p.standard_limit }}{{ p.unit || '' }}</template>
+                        ，范围 {{ p.min ?? '-' }}-{{ p.max ?? '-' }}{{ p.unit || '' }}（{{ p.count }}点 / {{ p.device_count }}设备）
                       </li>
                     </ul>
                     <div v-if="aiReport.online_data.note" class="online-metrics-note">
@@ -1570,6 +1726,18 @@ const handleTrendDialogClose = () => {
   font-size: 12px;
   color: #909399;
   margin-left: auto;
+}
+
+.brief-history-card {
+  margin-bottom: 16px;
+}
+
+.brief-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .report-card {
