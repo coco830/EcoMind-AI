@@ -22,6 +22,7 @@ from app.models.device import Device, DeviceStatus
 from app.models.daily_report import DailyReport, ReportStatus
 from app.services.data_analysis_service import DataAnalysisService
 from app.services.monitoring_service import MonitoringService
+from app.services.video_risk_service import VideoRiskService
 from app.core.prompts import (
     build_comprehensive_diagnosis_prompt,
     get_domain_from_pollutant_code,
@@ -32,6 +33,21 @@ settings = get_settings()
 
 # Global scheduler instance
 _scheduler: AsyncIOScheduler | None = None
+
+
+def _attach_video_prompt_context(prompt: str, video_risk_assessment: dict[str, Any]) -> str:
+    if not video_risk_assessment:
+        return prompt
+
+    prompt_block = VideoRiskService.format_for_prompt(video_risk_assessment)
+    return (
+        f"{prompt}\n\n"
+        "# Video Linkage Context (视频联动上下文)\n"
+        f"{prompt_block}\n\n"
+        "# Extra Output Requirement (额外输出要求)\n"
+        "请在报告中明确给出“疑似风险级别 + 证据片段 + 关联数采 + 建议动作”，"
+        "用于企业侧提前预警和复核，不得把视频摘要表述为法定监测结论。"
+    )
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -133,6 +149,11 @@ async def generate_daily_report_for_device(
         industry_info = await service.get_device_industry_info(device.mn)
         industry_type = industry_info.get("industry_type")
         national_standard = industry_info.get("national_standard")
+        video_risk_assessment = await VideoRiskService(db).build_device_video_risk_assessment(
+            device_id=device.mn,
+            target_date=target_date,
+            stats=stats,
+        )
 
         # 确定领域
         first_code = stats["pollutants"][0]["pollutant_code"]
@@ -149,6 +170,7 @@ async def generate_daily_report_for_device(
             industry_type=industry_type,
             national_standard=national_standard,
         )
+        prompt = _attach_video_prompt_context(prompt, video_risk_assessment)
 
         # 调用 AI 生成报告
         report_content = await _call_spark_api(prompt)
@@ -156,7 +178,13 @@ async def generate_daily_report_for_device(
         # 更新报告记录
         report.status = ReportStatus.COMPLETED.value
         report.report_content = report_content
-        report.stats_snapshot = json.dumps(stats, ensure_ascii=False)
+        report.stats_snapshot = json.dumps(
+            {
+                **stats,
+                "video_risk_assessment": video_risk_assessment,
+            },
+            ensure_ascii=False,
+        )
         report.pollutant_count = len(stats["pollutants"])
         report.data_points = stats.get("data_count", 0)
         report.domain = domain
@@ -227,6 +255,7 @@ async def _call_spark_api(prompt: str) -> str:
         app_id=settings.spark_app_id,
         api_secret=settings.spark_api_secret,
         api_key=settings.spark_api_key,
+        api_password=settings.spark_api_password,
         spark_url=settings.spark_api_url,
         domain=settings.spark_domain,
     )

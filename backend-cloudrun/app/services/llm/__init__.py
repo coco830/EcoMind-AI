@@ -20,6 +20,7 @@ def get_spark_client() -> SparkClient | None:
         app_id=settings.spark_app_id,
         api_secret=settings.spark_api_secret,
         api_key=settings.spark_api_key,
+        api_password=settings.spark_api_password,
         spark_url=settings.spark_api_url,
         domain=settings.spark_domain,
     )

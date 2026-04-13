@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 """
-讯飞星火大模型 WebSocket 客户端
-Spark Max (v3.5) 原生 WebSocket 接入实现
+讯飞星火大模型客户端。
+
+支持两种接入模式：
+1. WebSocket（经典模式，wss://spark-api.xf-yun.com/...）
+2. HTTP OpenAPI（兼容 OpenAI 风格，https://spark-api-open.xf-yun.com/v1/chat/completions）
 """
 
 import base64
@@ -16,6 +19,7 @@ from typing import AsyncGenerator
 from urllib.parse import urlencode, urlparse
 from wsgiref.handlers import format_date_time
 
+import httpx
 import structlog
 import websockets
 from websockets.exceptions import ConnectionClosed, WebSocketException
@@ -76,6 +80,7 @@ class SparkClient:
         app_id: str,
         api_secret: str,
         api_key: str,
+        api_password: str | None = None,
         spark_url: str = "wss://spark-api.xf-yun.com/v3.5/chat",
         domain: str = "generalv3.5",
         max_tokens: int = 8192,
@@ -91,6 +96,7 @@ class SparkClient:
             app_id: 讯飞开放平台 APPID
             api_secret: API Secret
             api_key: API Key
+            api_password: HTTP OpenAPI 的 APIPassword（可选）
             spark_url: WebSocket 服务地址
             domain: 模型域，如 pro-128k, max, ultra
             max_tokens: 最大生成 token 数
@@ -102,6 +108,8 @@ class SparkClient:
         self.app_id = app_id
         self.api_secret = api_secret
         self.api_key = api_key
+        # HTTP OpenAPI 推荐使用 APIPassword；为空时回退为 APIKey 以兼容旧配置
+        self.api_password = api_password or api_key
         self.spark_url = spark_url
         self.domain = domain
         self.max_tokens = max_tokens
@@ -112,8 +120,17 @@ class SparkClient:
 
         # 解析 URL 获取 host
         parsed = urlparse(spark_url)
+        self.scheme = (parsed.scheme or "").lower()
+        self.is_http_mode = self.scheme in {"http", "https"}
+        self.is_ws_mode = self.scheme in {"ws", "wss"}
         self.host = parsed.netloc
         self.path = parsed.path
+
+        if not self.is_http_mode and not self.is_ws_mode:
+            raise SparkClientError(
+                f"Unsupported Spark URL scheme: {self.scheme!r}. "
+                "Expected ws/wss or http/https."
+            )
 
     def _generate_auth_url(self) -> str:
         """
@@ -161,6 +178,24 @@ class SparkClient:
         logger.debug("Generated auth URL", url=auth_url[:100] + "...")
         return auth_url
 
+    def _format_messages(
+        self,
+        messages: list[dict],
+        system_prompt: str | None = None,
+    ) -> list[dict]:
+        """统一整理消息格式。"""
+        formatted_messages: list[dict] = []
+
+        if system_prompt:
+            formatted_messages.append({"role": "system", "content": system_prompt})
+
+        for msg in messages:
+            formatted_messages.append(
+                {"role": msg.get("role", "user"), "content": msg.get("content", "")}
+            )
+
+        return formatted_messages
+
     def _build_request_payload(
         self,
         messages: list[dict],
@@ -176,18 +211,7 @@ class SparkClient:
         Returns:
             符合星火 API 格式的请求字典
         """
-        # 处理消息格式
-        formatted_messages = []
-
-        # 添加系统提示词（如果有）
-        if system_prompt:
-            formatted_messages.append({"role": "system", "content": system_prompt})
-
-        # 添加对话消息
-        for msg in messages:
-            formatted_messages.append(
-                {"role": msg.get("role", "user"), "content": msg.get("content", "")}
-            )
+        formatted_messages = self._format_messages(messages, system_prompt)
 
         payload = {
             "header": {"app_id": self.app_id, "uid": "ecomind_user"},
@@ -203,6 +227,62 @@ class SparkClient:
         }
 
         return payload
+
+    def _build_http_payload(
+        self,
+        messages: list[dict],
+        system_prompt: str | None = None,
+        stream: bool = False,
+    ) -> dict:
+        """构建 HTTP OpenAPI 请求体。"""
+        return {
+            "model": self.domain,
+            "messages": self._format_messages(messages, system_prompt),
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": stream,
+        }
+
+    def _build_http_headers(self) -> dict[str, str]:
+        """构建 HTTP OpenAPI 请求头。"""
+        if not self.api_password:
+            raise SparkAuthError(
+                "HTTP OpenAPI requires APIPassword. "
+                "Set SPARK_API_PASSWORD (or SPARK_API_KEY as fallback)."
+            )
+        return {
+            "Authorization": f"Bearer {self.api_password}",
+            "Content-Type": "application/json",
+        }
+
+    @staticmethod
+    def _extract_http_content(payload: dict) -> str:
+        """从 HTTP OpenAPI 响应中提取文本内容。"""
+        choices = payload.get("choices") or []
+        if not choices:
+            return ""
+
+        first = choices[0] if isinstance(choices, list) else {}
+        if not isinstance(first, dict):
+            return ""
+
+        delta = first.get("delta")
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            if isinstance(content, str):
+                return content
+
+        message = first.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+
+        text = first.get("text")
+        if isinstance(text, str):
+            return text
+
+        return ""
 
     async def chat_stream(
         self,
@@ -224,18 +304,31 @@ class SparkClient:
             SparkConnectionError: 连接失败
             SparkClientError: 其他错误
         """
+        if self.is_http_mode:
+            async for chunk in self._http_chat_stream(messages, system_prompt):
+                yield chunk
+            return
+
         auth_url = self._generate_auth_url()
         request_payload = self._build_request_payload(messages, system_prompt)
-
         last_error = None
         for attempt in range(self.max_retries):
+            yielded_in_attempt = False
             try:
                 async for chunk in self._stream_response(auth_url, request_payload):
+                    yielded_in_attempt = True
                     yield chunk
                 return  # 成功完成，退出重试循环
 
             except ConnectionClosed as e:
                 last_error = e
+                if yielded_in_attempt:
+                    logger.warning(
+                        "WebSocket connection closed after partial output, returning partial response",
+                        code=e.code,
+                        reason=e.reason,
+                    )
+                    return
                 logger.warning(
                     "WebSocket connection closed",
                     attempt=attempt + 1,
@@ -252,6 +345,12 @@ class SparkClient:
 
             except WebSocketException as e:
                 last_error = e
+                if yielded_in_attempt:
+                    logger.warning(
+                        "WebSocket error after partial output, returning partial response",
+                        error=str(e),
+                    )
+                    return
                 logger.error(
                     "WebSocket error",
                     attempt=attempt + 1,
@@ -268,6 +367,87 @@ class SparkClient:
                 raise
 
         # 所有重试都失败
+        raise SparkConnectionError(
+            f"Failed after {self.max_retries} attempts: {last_error}"
+        )
+
+    async def _http_chat_stream(
+        self,
+        messages: list[dict],
+        system_prompt: str | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        HTTP OpenAPI 流式对话。
+        """
+        request_payload = self._build_http_payload(
+            messages=messages,
+            system_prompt=system_prompt,
+            stream=True,
+        )
+        headers = self._build_http_headers()
+        timeout = httpx.Timeout(connect=20.0, read=180.0, write=20.0, pool=20.0)
+
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream(
+                        "POST",
+                        self.spark_url,
+                        headers=headers,
+                        json=request_payload,
+                    ) as response:
+                        if response.status_code in (401, 403):
+                            raise SparkAuthError(
+                                f"Auth error [{response.status_code}]: {response.text}"
+                            )
+                        response.raise_for_status()
+
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+
+                            # SSE: data: {...}
+                            if line.startswith("data:"):
+                                data = line[5:].strip()
+                            else:
+                                data = line.strip()
+
+                            if not data or data == "[DONE]":
+                                continue
+
+                            try:
+                                payload = json.loads(data)
+                            except json.JSONDecodeError:
+                                logger.debug("Skip non-json stream line", line=data[:100])
+                                continue
+
+                            code = payload.get("code", 0)
+                            if code and code != 0:
+                                message_text = payload.get("message") or payload.get("msg") or ""
+                                if code in [10003, 10004, 10005, 10907, 11200, 11201]:
+                                    raise SparkAuthError(f"Auth error [{code}]: {message_text}")
+                                raise SparkClientError(f"API error [{code}]: {message_text}")
+
+                            content = self._extract_http_content(payload)
+                            if content:
+                                yield content
+                return
+            except SparkAuthError:
+                raise
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "HTTP Spark request failed",
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                    error=str(e),
+                )
+                if attempt < self.max_retries - 1:
+                    import asyncio
+
+                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+
         raise SparkConnectionError(
             f"Failed after {self.max_retries} attempts: {last_error}"
         )
@@ -298,7 +478,9 @@ class SparkClient:
             auth_url,
             ssl=ssl_context,
             ping_interval=30,
-            ping_timeout=10,
+            # Some upstream/proxy paths may delay pong frames; disable pong timeout
+            # to avoid aborting long report generation mid-stream.
+            ping_timeout=None,
             close_timeout=10,
         ) as ws:
             # 发送请求
@@ -364,6 +546,37 @@ class SparkClient:
         Returns:
             完整的生成文本
         """
+        if self.is_http_mode:
+            request_payload = self._build_http_payload(
+                messages=messages,
+                system_prompt=system_prompt,
+                stream=False,
+            )
+            headers = self._build_http_headers()
+            timeout = httpx.Timeout(connect=20.0, read=180.0, write=20.0, pool=20.0)
+
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    self.spark_url,
+                    headers=headers,
+                    json=request_payload,
+                )
+                if response.status_code in (401, 403):
+                    raise SparkAuthError(
+                        f"Auth error [{response.status_code}]: {response.text}"
+                    )
+                response.raise_for_status()
+
+                payload = response.json()
+                code = payload.get("code", 0)
+                if code and code != 0:
+                    message_text = payload.get("message") or payload.get("msg") or ""
+                    if code in [10003, 10004, 10005, 10907, 11200, 11201]:
+                        raise SparkAuthError(f"Auth error [{code}]: {message_text}")
+                    raise SparkClientError(f"API error [{code}]: {message_text}")
+
+                return self._extract_http_content(payload)
+
         chunks = []
         async for chunk in self.chat_stream(messages, system_prompt):
             chunks.append(chunk)

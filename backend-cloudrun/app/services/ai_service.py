@@ -295,6 +295,7 @@ def create_ai_service(
     app_id: str,
     api_secret: str,
     api_key: str,
+    api_password: str | None = None,
     db_session: AsyncSession | None = None,
     spark_url: str = "wss://spark-api.xf-yun.com/chat/pro-128k",
     domain: str = "pro-128k",
@@ -306,6 +307,7 @@ def create_ai_service(
         app_id: 讯飞 APPID
         api_secret: API Secret
         api_key: API Key
+        api_password: HTTP OpenAPI 的 APIPassword（可选）
         db_session: 数据库会话
         spark_url: WebSocket 地址
         domain: 模型域
@@ -317,6 +319,7 @@ def create_ai_service(
         app_id=app_id,
         api_secret=api_secret,
         api_key=api_key,
+        api_password=api_password,
         spark_url=spark_url,
         domain=domain,
     )

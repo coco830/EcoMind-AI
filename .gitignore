@@ -77,3 +77,9 @@ lightning_logs/
 *.tar.gz
 *.zip
 backend/ecomind.db
+
+# Local temporary deployment/debug artifacts
+tmp_*.bin
+tmp-cloudrun-download*/
+backend-cloudrun/tcb-*.log
+backend-cloudrun/*tmp_orgs.json

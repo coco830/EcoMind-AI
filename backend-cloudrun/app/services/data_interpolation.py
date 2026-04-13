@@ -17,6 +17,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, date
 from enum import Enum
+import re
 from typing import Any, Optional
 
 import numpy as np
@@ -85,13 +86,33 @@ class DataInterpolator:
         初始化插值器。
 
         Args:
-            target_interval: 目标采样间隔（如 "1min", "5min", "15min", "1H"）
+            target_interval: 目标采样间隔（如 "1min", "5min", "15min", "1h"）
             interpolation_method: 插值方法 (linear/time/pad/nearest/spline)
             max_interpolation_gap: 最大允许插值的时间间隔（分钟），超过则不插值
         """
-        self.target_interval = target_interval
+        self.target_interval = self._normalize_frequency(target_interval)
         self.interpolation_method = interpolation_method
         self.max_interpolation_gap = max_interpolation_gap
+
+    @staticmethod
+    def _normalize_frequency(freq: str) -> str:
+        """兼容 Pandas 新版本中已弃用的大写频率别名。"""
+        normalized = freq.strip()
+        match = re.fullmatch(r"(?P<count>\d+)?(?P<unit>[A-Za-z]+)", normalized)
+        if not match:
+            return normalized
+
+        deprecated_aliases = {
+            "H": "h",
+            "T": "min",
+            "S": "s",
+            "L": "ms",
+            "U": "us",
+            "N": "ns",
+        }
+        count = match.group("count") or ""
+        unit = match.group("unit")
+        return f"{count}{deprecated_aliases.get(unit, unit)}"
 
     def assess_data_quality(
         self,
@@ -147,7 +168,7 @@ class DataInterpolator:
         coverage_rate = actual_points / expected_points if expected_points > 0 else 0.0
 
         # 检测缺失的小时
-        df_hourly = df.set_index("ts").resample("H").count()
+        df_hourly = df.set_index("ts").resample("h").count()
         hours_with_data = set(df_hourly[df_hourly["value"] > 0].index.hour)
         all_hours = set(range(24))
         missing_hours = sorted(list(all_hours - hours_with_data))
@@ -156,7 +177,7 @@ class DataInterpolator:
         data_gaps = self._detect_gaps(df, max_gap_minutes=self.max_interpolation_gap)
 
         # 计算每小时的数据密度
-        hourly_counts = df.set_index("ts").resample("H")["value"].count()
+        hourly_counts = df.set_index("ts").resample("h")["value"].count()
         hours_with_sufficient_data = (hourly_counts >= self.MIN_POINTS_PER_HOUR).sum()
         total_hours = len(hourly_counts)
         hourly_coverage = hours_with_sufficient_data / total_hours if total_hours > 0 else 0.0
@@ -230,7 +251,7 @@ class DataInterpolator:
         if df.empty:
             return pd.DataFrame(columns=["ts", "value"])
 
-        interval = target_interval or self.target_interval
+        interval = self._normalize_frequency(target_interval or self.target_interval)
         interp_method = method or self.interpolation_method
 
         # 设置时间索引
@@ -259,7 +280,7 @@ class DataInterpolator:
             else:
                 df_interpolated = df_reindexed.interpolate(method="linear")
         elif interp_method in ["pad", "ffill"]:
-            df_interpolated = df_reindexed.fillna(method="ffill", limit=10)
+            df_interpolated = df_reindexed.ffill(limit=10)
         elif interp_method == "nearest":
             df_interpolated = df_reindexed.interpolate(method="nearest")
         else:  # linear (default)
@@ -270,8 +291,8 @@ class DataInterpolator:
             df_interpolated.loc[gap_mask, "value"] = np.nan
 
         # 填充边界值（使用前向/后向填充）
-        df_interpolated = df_interpolated.fillna(method="bfill", limit=5)
-        df_interpolated = df_interpolated.fillna(method="ffill", limit=5)
+        df_interpolated = df_interpolated.bfill(limit=5)
+        df_interpolated = df_interpolated.ffill(limit=5)
 
         # 重置索引
         df_result = df_interpolated.reset_index()
@@ -322,7 +343,7 @@ class DataInterpolator:
 
         # 按小时聚合
         df_interpolated = df_interpolated.set_index("ts")
-        hourly = df_interpolated["value"].resample("H").agg(["mean", "max", "min", "count"])
+        hourly = df_interpolated["value"].resample("h").agg(["mean", "max", "min", "count"])
         hourly = hourly.reset_index()
         hourly["hour"] = hourly["ts"].dt.strftime("%H:00")
 
@@ -331,7 +352,7 @@ class DataInterpolator:
             full_hours = pd.date_range(
                 start=datetime.combine(target_date, datetime.min.time()),
                 end=datetime.combine(target_date, datetime.max.time()),
-                freq="H",
+                freq="h",
             )
             hourly_full = pd.DataFrame({"ts": full_hours})
             hourly_full["hour"] = hourly_full["ts"].dt.strftime("%H:00")
@@ -383,10 +404,10 @@ class DataInterpolator:
         # 根据粒度选择采样间隔
         interval_map = {
             PredictionGranularity.MINUTE_15: "15min",
-            PredictionGranularity.HOURLY: "1H",
+            PredictionGranularity.HOURLY: "1h",
             PredictionGranularity.DAILY: "1D",
         }
-        target_interval = interval_map.get(granularity, "1H")
+        target_interval = interval_map.get(granularity, "1h")
 
         # 执行插值
         df_interpolated = self.interpolate(data, target_interval=target_interval)

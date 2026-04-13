@@ -37,6 +37,7 @@ from app.services.data_analysis_service import DataAnalysisService
 from app.services.llm.spark_client import SparkClient, SparkClientError
 from app.services.monitoring_service import MonitoringService
 from app.services.scheduler import trigger_daily_reports_manually
+from app.services.video_risk_service import VideoRiskService
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -452,9 +453,84 @@ def _get_spark_client() -> SparkClient:
         app_id=settings.spark_app_id,
         api_secret=settings.spark_api_secret,
         api_key=settings.spark_api_key,
+        api_password=settings.spark_api_password,
         spark_url=settings.spark_api_url,
         domain=settings.spark_domain,
     )
+
+
+async def _build_video_risk_assessment(
+    db_session: AsyncSession,
+    *,
+    device_id: str,
+    target_date: date,
+    stats: dict[str, Any],
+) -> dict[str, Any]:
+    """Build structured video-risk assessment for AI report consumption."""
+    try:
+        return await VideoRiskService(db_session).build_device_video_risk_assessment(
+            device_id=device_id,
+            target_date=target_date,
+            stats=stats,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to build video risk assessment",
+            device_id=device_id,
+            target_date=target_date.isoformat(),
+            error=str(exc),
+        )
+        return {
+            "enabled": False,
+            "has_video_channels": False,
+            "channel_count": 0,
+            "ai_enabled_channel_count": 0,
+            "event_count": 0,
+            "evidence_count": 0,
+            "linked_alarm_event_count": 0,
+            "same_window_signal_count": 0,
+            "overall_risk_level": "none",
+            "overall_risk_label": "无视频风险",
+            "overall_risk_score": 0,
+            "summary": "视频风险摘要暂不可用，本次报告仅基于数采数据生成。",
+            "recommended_actions": [],
+            "evidence_fragments": [],
+        }
+
+
+def _attach_video_prompt_context(prompt: str, video_risk_assessment: dict[str, Any]) -> str:
+    """Append structured video-risk context to the LLM prompt."""
+    if not video_risk_assessment:
+        return prompt
+
+    prompt_block = VideoRiskService.format_for_prompt(video_risk_assessment)
+    return (
+        f"{prompt}\n\n"
+        "# Video Linkage Context (视频联动上下文)\n"
+        f"{prompt_block}\n\n"
+        "# Extra Output Requirement (额外输出要求)\n"
+        "请在报告中明确给出“疑似风险级别 + 证据片段 + 关联数采 + 建议动作”，"
+        "用于企业侧提前预警和复核，不得把视频摘要表述为法定监测结论。"
+    )
+
+
+def _extract_video_risk_assessment_from_snapshot(
+    stats_snapshot: str | None,
+) -> dict[str, Any] | None:
+    """Extract top-level video-risk assessment from stored report snapshot."""
+    if not stats_snapshot:
+        return None
+
+    try:
+        payload = json.loads(stats_snapshot)
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    assessment = payload.get("video_risk_assessment")
+    return assessment if isinstance(assessment, dict) else None
 
 
 async def _generate_report_stream(
@@ -545,6 +621,13 @@ async def _generate_report_stream(
                 national_standard=national_standard,
             )
 
+            video_risk_assessment = await _build_video_risk_assessment(
+                db_session,
+                device_id=device_id,
+                target_date=actual_date,
+                stats=stats,
+            )
+
         if not stats.get("pollutants"):
             yield f"event: error\ndata: {json.dumps({'error': f'设备 {device_id} 在数据库中无任何监测数据，请确认设备ID是否正确或设备是否已上报数据'})}\n\n"
             return
@@ -569,6 +652,7 @@ async def _generate_report_stream(
                 industry_type=industry_type,
                 national_standard=national_standard,
             )
+            prompt = _attach_video_prompt_context(prompt, video_risk_assessment)
             logger.info(
                 "Built comprehensive prompt",
                 pollutant_count=pollutant_count,
@@ -611,6 +695,7 @@ async def _generate_report_stream(
                 trend_desc=pollutant_stats.get("trend_description", "数据正常"),
                 unit=unit,
             )
+            prompt = _attach_video_prompt_context(prompt, video_risk_assessment)
 
         logger.debug("Prompt built", prompt_length=len(prompt))
 
@@ -629,6 +714,7 @@ async def _generate_report_stream(
         done_data = {
             'status': 'completed',
             'stats': stats,
+            'video_risk_assessment': video_risk_assessment,
             'mode': 'comprehensive' if is_comprehensive else 'single',
             'actual_date': actual_date.isoformat(),
             'date_fallback_used': date_fallback_used,
@@ -794,6 +880,12 @@ async def generate_ai_report_sync(
         industry_info = await service.get_device_industry_info(device_id)
         industry_type = industry_info.get("industry_type")
         national_standard = industry_info.get("national_standard")
+        video_risk_assessment = await _build_video_risk_assessment(
+            db_session,
+            device_id=device_id,
+            target_date=target_date,
+            stats=stats,
+        )
 
     if not stats.get("pollutants"):
         raise HTTPException(
@@ -817,6 +909,7 @@ async def generate_ai_report_sync(
             industry_type=industry_type,
             national_standard=national_standard,
         )
+        prompt = _attach_video_prompt_context(prompt, video_risk_assessment)
 
         # 调用 AI
         try:
@@ -834,6 +927,7 @@ async def generate_ai_report_sync(
             "report_date": target_date.isoformat(),
             "domain": domain,
             "stats": stats,
+            "video_risk_assessment": video_risk_assessment,
             "report": report_content,
         }
     else:
@@ -872,6 +966,7 @@ async def generate_ai_report_sync(
             trend_desc=pollutant_stats.get("trend_description", "数据正常"),
             unit=unit,
         )
+        prompt = _attach_video_prompt_context(prompt, video_risk_assessment)
 
         # 调用 AI
         try:
@@ -890,6 +985,7 @@ async def generate_ai_report_sync(
             "report_date": target_date.isoformat(),
             "domain": domain,
             "stats": stats,
+            "video_risk_assessment": video_risk_assessment,
             "report": report_content,
         }
 
@@ -968,6 +1064,7 @@ async def get_cached_report(
             "status": report.status,
             "report_content": report.report_content if report.status == ReportStatus.COMPLETED.value else None,
             "stats_snapshot": report.stats_snapshot,
+            "video_risk_assessment": _extract_video_risk_assessment_from_snapshot(report.stats_snapshot),
             "pollutant_count": report.pollutant_count,
             "data_points": report.data_points,
             "domain": report.domain,
@@ -1055,6 +1152,12 @@ async def generate_report_with_rate_limit(
         industry_info = await service.get_device_industry_info(device_id)
         industry_type = industry_info.get("industry_type")
         national_standard = industry_info.get("national_standard")
+        video_risk_assessment = await _build_video_risk_assessment(
+            db_session,
+            device_id=device_id,
+            target_date=target_date,
+            stats=stats,
+        )
 
     if not stats.get("pollutants"):
         raise HTTPException(
@@ -1076,6 +1179,7 @@ async def generate_report_with_rate_limit(
         industry_type=industry_type,
         national_standard=national_standard,
     )
+    prompt = _attach_video_prompt_context(prompt, video_risk_assessment)
 
     # 调用 AI
     try:
@@ -1102,7 +1206,13 @@ async def generate_report_with_rate_limit(
         if existing_report:
             # 更新现有记录
             existing_report.report_content = report_content
-            existing_report.stats_snapshot = json.dumps(stats, ensure_ascii=False)
+            existing_report.stats_snapshot = json.dumps(
+                {
+                    **stats,
+                    "video_risk_assessment": video_risk_assessment,
+                },
+                ensure_ascii=False,
+            )
             existing_report.pollutant_count = len(stats["pollutants"])
             existing_report.data_points = stats.get("data_count", 0)
             existing_report.domain = domain
@@ -1116,7 +1226,13 @@ async def generate_report_with_rate_limit(
                 report_date=target_date,
                 status=ReportStatus.COMPLETED.value,
                 report_content=report_content,
-                stats_snapshot=json.dumps(stats, ensure_ascii=False),
+                stats_snapshot=json.dumps(
+                    {
+                        **stats,
+                        "video_risk_assessment": video_risk_assessment,
+                    },
+                    ensure_ascii=False,
+                ),
                 pollutant_count=len(stats["pollutants"]),
                 data_points=stats.get("data_count", 0),
                 domain=domain,
@@ -1136,6 +1252,7 @@ async def generate_report_with_rate_limit(
         "industry_type": industry_type,
         "national_standard": national_standard,
         "stats": stats,
+        "video_risk_assessment": video_risk_assessment,
         "report": report_content,
         "rate_limit": {
             "device_cooldown_minutes": rate_limiter.device_cooldown_minutes,
@@ -1243,6 +1360,9 @@ async def diagnose_db_status() -> dict[str, Any]:
             "app_id_set": bool(fresh_settings.spark_app_id),
             "api_key_set": bool(fresh_settings.spark_api_key),
             "api_secret_set": bool(fresh_settings.spark_api_secret),
+            "api_password_set": bool(fresh_settings.spark_api_password),
+            "api_url": fresh_settings.spark_api_url,
+            "domain": fresh_settings.spark_domain,
         },
     }
 

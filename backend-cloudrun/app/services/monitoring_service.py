@@ -5,6 +5,7 @@
 """
 
 from datetime import datetime, date, timedelta
+from statistics import median
 from typing import Any, Dict, List, Optional
 import structlog
 
@@ -270,6 +271,7 @@ class MonitoringService:
                     "pollutant_name": record.pollutant_name or (pol_info.get("name") if pol_info else None),
                     "value": record.value,
                     "flag": record.flag,
+                    "status": record.status,
                 }
 
             return list(latest_by_device_pollutant.values())
@@ -324,6 +326,125 @@ class MonitoringService:
         except Exception as e:
             logger.error("Failed to get statistics", error=str(e))
             return {}
+
+    async def get_period_summary(
+        self,
+        *,
+        device_id: str,
+        org_id: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> Dict[str, Any]:
+        """Build pollutant summary for a device within a time window.
+
+        This is designed for external report integrations that need
+        `mnCode + time range -> pollutant stats`.
+        """
+        rows = await self.query_monitoring_data(
+            device_id=device_id,
+            org_id=org_id,
+            start_time=start_time,
+            end_time=end_time,
+            limit=200000,
+        )
+
+        if not rows:
+            return {
+                "total_data_points": 0,
+                "pollutant_count": 0,
+                "items": [],
+            }
+
+        grouped: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            code = normalize_pollutant_code(str(row.get("pollutant_code") or "").strip())
+            if not code:
+                continue
+
+            pol_info = get_pollutant_info(code) or {}
+            ts = row.get("ts")
+            value = row.get("value")
+            if ts is None or value is None:
+                continue
+
+            group = grouped.setdefault(
+                code,
+                {
+                    "pollutant_code": code,
+                    "pollutant_name": row.get("pollutant_name") or pol_info.get("name") or code,
+                    "unit": pol_info.get("unit") or "",
+                    "values": [],
+                    "timestamps": [],
+                },
+            )
+            group["values"].append(float(value))
+            group["timestamps"].append(ts)
+
+        items: List[Dict[str, Any]] = []
+        total_points = 0
+        for code in sorted(grouped.keys()):
+            group = grouped[code]
+            values = group["values"]
+            timestamps = sorted(set(group["timestamps"]))
+            if not values or not timestamps:
+                continue
+
+            data_points = len(values)
+            total_points += data_points
+            completeness = self._estimate_completeness_rate(
+                timestamps=timestamps,
+                start_time=start_time,
+                end_time=end_time,
+            )
+
+            items.append(
+                {
+                    "pollutantCode": code,
+                    "pollutantName": group["pollutant_name"],
+                    "unit": group["unit"],
+                    "averageValue": round(sum(values) / len(values), 4),
+                    "minValue": round(min(values), 4),
+                    "maxValue": round(max(values), 4),
+                    "completenessRate": completeness,
+                    "dataPoints": data_points,
+                    "firstSampleTime": timestamps[0].strftime("%Y-%m-%d %H:%M:%S"),
+                    "lastSampleTime": timestamps[-1].strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+
+        return {
+            "total_data_points": total_points,
+            "pollutant_count": len(items),
+            "items": items,
+        }
+
+    @staticmethod
+    def _estimate_completeness_rate(
+        *,
+        timestamps: List[datetime],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> float:
+        """Estimate completeness by inferring sampling interval from actual rows."""
+        if not timestamps:
+            return 0.0
+        if len(timestamps) == 1:
+            return 100.0
+
+        intervals = []
+        for previous, current in zip(timestamps, timestamps[1:]):
+            delta_seconds = int((current - previous).total_seconds())
+            if delta_seconds > 0:
+                intervals.append(delta_seconds)
+
+        if not intervals:
+            return 100.0
+
+        typical_interval = max(1, int(median(intervals)))
+        window_seconds = max(0, int((end_time - start_time).total_seconds()))
+        expected_points = max(len(timestamps), int(window_seconds / typical_interval) + 1)
+        completeness = len(timestamps) / expected_points * 100
+        return round(min(100.0, completeness), 2)
 
     async def aggregate_daily_stats(
         self,

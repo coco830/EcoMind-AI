@@ -3,7 +3,7 @@ from __future__ import annotations
 """Monitoring data API endpoints."""
 
 from datetime import datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel
@@ -135,7 +135,7 @@ async def query_monitoring_data(
                 pollutant_code=row['pollutant_code'],
                 value=row['value'],
                 flag=row['flag'],
-                status=row['status']
+                status=int(row.get('status', 0))
             ))
 
         logger.info("Retrieved monitoring data", count=len(responses))
@@ -187,7 +187,7 @@ async def get_latest_data(
                 pollutant_code=row['pollutant_code'],
                 value=row['value'],
                 flag=row['flag'],
-                status=row['status']
+                status=int(row.get('status', 0))
             ))
 
         logger.info("Retrieved latest data", count=len(responses))
@@ -355,7 +355,7 @@ async def export_data(
     pollutant_code: str | None = None,
     start_time: datetime | None = None,
     end_time: datetime | None = None,
-    format: str = Query("json", regex="^(json|csv)$"),
+    format: Literal["json", "csv"] = Query("json"),
 ) -> dict:
     """Export monitoring data (returns download URL or data). Access controlled by organization."""
     try:

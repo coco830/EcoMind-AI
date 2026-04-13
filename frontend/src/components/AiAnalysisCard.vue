@@ -11,12 +11,36 @@ const props = defineProps<{
   pollutant?: string  // Optional - if not provided, use comprehensive analysis
 }>()
 
+interface VideoEvidenceFragment {
+  event_id: string
+  occurred_at: string
+  channel_name: string
+  point_type_label: string
+  title: string
+  risk_label: string
+  risk_score: number
+  associated_data_summary: string
+  suggested_action: string
+  snapshot_uri?: string | null
+  clip_uri?: string | null
+}
+
+interface VideoRiskAssessment {
+  overall_risk_level: string
+  overall_risk_label: string
+  overall_risk_score: number
+  summary: string
+  recommended_actions: string[]
+  evidence_fragments: VideoEvidenceFragment[]
+}
+
 // State
 const analysisResult = ref('')
 const isLoading = ref(false)
 const isStreaming = ref(false)
 const error = ref<string | null>(null)
 const contentRef = ref<HTMLElement | null>(null)
+const videoRiskAssessment = ref<VideoRiskAssessment | null>(null)
 
 // Markdown renderer
 const md = new MarkdownIt({
@@ -33,6 +57,20 @@ const renderedContent = computed(() => {
 
 // Auth store for token
 const authStore = useAuthStore()
+
+const riskTagType = (riskLevel: string) => {
+  if (riskLevel === 'urgent' || riskLevel === 'high') return 'danger'
+  if (riskLevel === 'medium') return 'warning'
+  if (riskLevel === 'low') return 'success'
+  return 'info'
+}
+
+const canOpenEvidence = (url?: string | null) => !!url && /^https?:\/\//i.test(url)
+
+const openEvidence = (url?: string | null) => {
+  if (!canOpenEvidence(url)) return
+  window.open(url as string, '_blank', 'noopener,noreferrer')
+}
 
 // Scroll to bottom of content area
 const scrollToBottom = () => {
@@ -55,6 +93,7 @@ const startAnalysis = async () => {
   error.value = null
   isLoading.value = true
   isStreaming.value = false
+  videoRiskAssessment.value = null
 
   const params = new URLSearchParams({
     device_id: props.deviceId,
@@ -133,6 +172,7 @@ const startAnalysis = async () => {
                 scrollToBottom()
                 break
               case 'done':
+                videoRiskAssessment.value = data.video_risk_assessment || null
                 isStreaming.value = false
                 break
               case 'error':
@@ -162,6 +202,7 @@ const startAnalysis = async () => {
 const clearResult = () => {
   analysisResult.value = ''
   error.value = null
+  videoRiskAssessment.value = null
 }
 
 // Watch for device/pollutant changes to clear previous result
@@ -276,6 +317,78 @@ watch([() => props.deviceId, () => props.pollutant], () => {
 
       <!-- Result Content -->
       <div v-else ref="contentRef" class="result-content markdown-body">
+        <div v-if="videoRiskAssessment" class="video-risk-summary">
+          <div class="video-risk-header">
+            <div>
+              <div class="video-risk-title">视频联动风险摘要</div>
+              <div class="video-risk-text">{{ videoRiskAssessment.summary }}</div>
+            </div>
+            <div class="video-risk-badges">
+              <el-tag :type="riskTagType(videoRiskAssessment.overall_risk_level)" size="small" effect="dark">
+                {{ videoRiskAssessment.overall_risk_label }}
+              </el-tag>
+              <span class="video-risk-score">{{ videoRiskAssessment.overall_risk_score }} 分</span>
+            </div>
+          </div>
+
+          <div
+            v-if="videoRiskAssessment.recommended_actions?.length"
+            class="video-risk-actions"
+          >
+            <div class="video-risk-section-title">建议动作</div>
+            <div
+              v-for="action in videoRiskAssessment.recommended_actions.slice(0, 3)"
+              :key="action"
+              class="video-risk-action-item"
+            >
+              {{ action }}
+            </div>
+          </div>
+
+          <div
+            v-if="videoRiskAssessment.evidence_fragments?.length"
+            class="video-risk-evidence-list"
+          >
+            <div class="video-risk-section-title">关键证据</div>
+            <div
+              v-for="item in videoRiskAssessment.evidence_fragments.slice(0, 2)"
+              :key="item.event_id"
+              class="video-risk-evidence-item"
+            >
+              <div class="video-risk-evidence-top">
+                <div>
+                  <div class="video-risk-evidence-title">{{ item.title }}</div>
+                  <div class="video-risk-evidence-meta">
+                    {{ item.occurred_at }} · {{ item.channel_name }} · {{ item.point_type_label }}
+                  </div>
+                </div>
+                <el-tag :type="riskTagType(videoRiskAssessment.overall_risk_level)" size="small">
+                  {{ item.risk_label }}
+                </el-tag>
+              </div>
+              <div class="video-risk-evidence-data">{{ item.associated_data_summary }}</div>
+              <div class="video-risk-evidence-action">{{ item.suggested_action }}</div>
+              <div class="video-risk-evidence-links">
+                <el-button
+                  v-if="canOpenEvidence(item.snapshot_uri)"
+                  link
+                  type="primary"
+                  @click="openEvidence(item.snapshot_uri)"
+                >
+                  查看截图
+                </el-button>
+                <el-button
+                  v-if="canOpenEvidence(item.clip_uri)"
+                  link
+                  type="primary"
+                  @click="openEvidence(item.clip_uri)"
+                >
+                  查看片段
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div v-html="renderedContent"></div>
         <span v-if="isStreaming" class="cursor-blink">|</span>
       </div>
@@ -409,6 +522,116 @@ export default {
   border-radius: 8px;
   font-size: 14px;
   line-height: 1.8;
+}
+
+.video-risk-summary {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid #d7e3f4;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
+}
+
+.video-risk-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.video-risk-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #24405f;
+}
+
+.video-risk-text {
+  margin-top: 6px;
+  color: #52637a;
+  line-height: 1.6;
+}
+
+.video-risk-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.video-risk-score {
+  font-size: 13px;
+  font-weight: 600;
+  color: #24405f;
+}
+
+.video-risk-section-title {
+  margin-top: 14px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #35506f;
+}
+
+.video-risk-action-item {
+  position: relative;
+  padding-left: 12px;
+  color: #43566f;
+  line-height: 1.7;
+}
+
+.video-risk-action-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #5b8def;
+}
+
+.video-risk-evidence-list {
+  display: grid;
+  gap: 10px;
+}
+
+.video-risk-evidence-item {
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #e3ebf5;
+}
+
+.video-risk-evidence-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.video-risk-evidence-title {
+  font-weight: 600;
+  color: #24364d;
+}
+
+.video-risk-evidence-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #7b8aa0;
+}
+
+.video-risk-evidence-data,
+.video-risk-evidence-action {
+  margin-top: 8px;
+  color: #4f6177;
+  line-height: 1.6;
+}
+
+.video-risk-evidence-links {
+  margin-top: 8px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 /* Markdown Styling */

@@ -227,7 +227,7 @@ class DataAnalysisService:
         df_copy = df_copy.set_index("ts")
 
         # 按小时重采样，计算 mean/max/min/count
-        hourly = df_copy["value"].resample("H").agg(["mean", "max", "min", "count"])
+        hourly = df_copy["value"].resample("h").agg(["mean", "max", "min", "count"])
 
         # 记录哪些小时有原始数据
         has_data = hourly["count"] > 0

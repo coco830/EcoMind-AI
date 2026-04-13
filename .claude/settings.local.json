@@ -83,7 +83,21 @@
       "Bash(tasklist:*)",
       "Bash(powershell \"Expand-Archive -Path ''ecomind-backend-cloudrun.zip'' -DestinationPath ''zip-check'' -Force\")",
       "Bash(if exist backend-deploy.zip del backend-deploy.zip)",
-      "Bash(xargs -I{} sh -c 'echo \"\"=== {} ===\"\" && head -10 {}')"
+      "Bash(xargs -I{} sh -c 'echo \"\"=== {} ===\"\" && head -10 {}')",
+      "mcp__cloudbase__executeReadOnlySQL",
+      "mcp__cloudbase__domainManagement",
+      "mcp__cloudbase__envQuery",
+      "Bash(printf:*)",
+      "WebFetch(domain:openclaw.ai)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "WebFetch(domain:www.google.com)",
+      "WebFetch(domain:www.bing.com)",
+      "WebFetch(domain:search.yahoo.com)",
+      "WebFetch(domain:duckduckgo.com)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:www.openclaw.ai)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.duckduckgo.com)"
     ],
     "deny": [],
     "ask": []

@@ -45,6 +45,11 @@ from app.models.self_inspection import (
     AIReportRequest,
     AIReportResponse,
 )
+from app.models.integration_push_job import (
+    PackagePushJob,
+    PackagePushJobResponse,
+    PackagePushJobStatus,
+)
 from app.models.video import (
     VideoAccessMethod,
     VideoChannel,
@@ -126,6 +131,9 @@ __all__ = [
     "TrendAnalysisResponse",
     "AIReportRequest",
     "AIReportResponse",
+    "PackagePushJob",
+    "PackagePushJobResponse",
+    "PackagePushJobStatus",
     "VideoAccessMethod",
     "VideoChannel",
     "VideoChannelCreate",

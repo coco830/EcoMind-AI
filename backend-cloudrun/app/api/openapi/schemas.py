@@ -192,3 +192,41 @@ class AiReportResponse(OpenApiResponse):
     #   "report_content", "report_status",
     #   "stats_snapshot": {...},
     # }
+
+
+# ---------------------------------------------------------------------------
+# Integration Tool: monitoring summary
+# ---------------------------------------------------------------------------
+
+class MonitoringSummaryItem(BaseModel):
+    """Period summary for one pollutant under a device/MN."""
+
+    pollutantCode: str = Field(description="污染物编码")
+    pollutantName: str = Field(description="污染物名称")
+    unit: str = Field(default="", description="计量单位")
+    averageValue: float | None = Field(default=None, description="平均值")
+    minValue: float | None = Field(default=None, description="最小值")
+    maxValue: float | None = Field(default=None, description="最大值")
+    completenessRate: float = Field(default=0.0, description="数据完整率，百分比")
+    dataPoints: int = Field(default=0, description="数据点数量")
+    firstSampleTime: str = Field(default="", description="首个样本时间")
+    lastSampleTime: str = Field(default="", description="最后样本时间")
+
+
+class MonitoringSummaryResponse(OpenApiResponse):
+    """Response for monitoring summary integration endpoint."""
+    data: Optional[dict] = None
+
+
+# ---------------------------------------------------------------------------
+# Integration Tool: execution package push
+# ---------------------------------------------------------------------------
+
+class PackagePushResponse(OpenApiResponse):
+    """Response for execution package push integration endpoint."""
+    data: Optional[dict] = None
+
+
+class PackagePushStatusResponse(OpenApiResponse):
+    """Response for execution package push status query endpoint."""
+    data: Optional[dict] = None

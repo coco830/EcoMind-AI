@@ -241,6 +241,9 @@ class Settings(BaseSettings):
     spark_app_id: str = ""
     spark_api_key: str = ""
     spark_api_secret: str = ""
+    # HTTP OpenAPI mode uses APIPassword as Bearer token.
+    # If empty, code falls back to spark_api_key for backward compatibility.
+    spark_api_password: str = ""
     spark_api_url: str = "wss://spark-api.xf-yun.com/v3.5/chat"
     spark_domain: str = "generalv3.5"
 
