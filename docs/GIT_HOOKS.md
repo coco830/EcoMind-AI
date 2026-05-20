@@ -29,8 +29,17 @@ git config core.hooksPath .githooks
   - Blocks vague subjects such as `wip`, `tmp`, `test`, `fix`, or `update`.
 
 - `pre-push`
-  - Blocks pushes from protected branches.
+  - Blocks pushes from protected branches unless a human has explicitly approved the mainline push.
   - Runs `python .\verify.py check`.
+  - For human-approved protected branch pushes, also runs `python .\verify.py test`.
+
+Human-approved protected branch push:
+
+```powershell
+$env:HUMAN_APPROVED_MAIN_PUSH = "1"
+git push origin main
+Remove-Item Env:\HUMAN_APPROVED_MAIN_PUSH
+```
 
 - `post-merge`
   - Runs only when the current branch is `main`.
