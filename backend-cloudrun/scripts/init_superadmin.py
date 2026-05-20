@@ -6,11 +6,13 @@ Run this once after deployment to set up the platform administrator.
 
 Usage:
     python scripts/init_superadmin.py
+    SUPERADMIN_PASSWORD='...' python scripts/init_superadmin.py
 
-The superadmin account has fixed credentials:
+The superadmin account has fixed identity:
     Username: huanbao
     Email: yueenhb@163.com
-    Password: huanbao@123
+
+Production requires SUPERADMIN_PASSWORD or DEFAULT_HUANBAO_PASSWORD.
 """
 
 import asyncio
@@ -27,15 +29,37 @@ from app.models.organization import Organization
 from app.core.security import get_password_hash
 
 
-# Fixed superadmin credentials
 SUPERADMIN_USERNAME = "huanbao"
 SUPERADMIN_EMAIL = "yueenhb@163.com"
-SUPERADMIN_PASSWORD = "huanbao@123"
+SUPERADMIN_PASSWORD_ENV = "SUPERADMIN_PASSWORD"
+FALLBACK_PASSWORD_ENV = "DEFAULT_HUANBAO_PASSWORD"
+DEV_ONLY_SUPERADMIN_PASSWORD = "huanbao@123"
+
+
+class PasswordConfigurationError(RuntimeError):
+    """Raised when production superadmin password is not explicitly configured."""
+
+
+def _is_production_environment() -> bool:
+    environment = os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development"
+    return environment.strip().lower() == "production"
+
+
+def get_superadmin_password() -> str:
+    password = os.getenv(SUPERADMIN_PASSWORD_ENV) or os.getenv(FALLBACK_PASSWORD_ENV)
+    if password:
+        return password
+    if _is_production_environment():
+        raise PasswordConfigurationError(
+            f"{SUPERADMIN_PASSWORD_ENV} is required when initializing superadmin in production"
+        )
+    return DEV_ONLY_SUPERADMIN_PASSWORD
 
 
 async def create_superadmin():
-    """Create superadmin account with fixed credentials."""
+    """Create superadmin account with configured credentials."""
     print("\n=== EcoMind-AI 超级管理员初始化 ===\n")
+    superadmin_password = get_superadmin_password()
 
     # Initialize database
     await init_db()
@@ -51,7 +75,7 @@ async def create_superadmin():
             if existing_user.is_superadmin:
                 print(f"超级管理员账号 '{SUPERADMIN_USERNAME}' 已存在")
                 # Ensure password is correct
-                existing_user.hashed_password = get_password_hash(SUPERADMIN_PASSWORD)
+                existing_user.hashed_password = get_password_hash(superadmin_password)
                 existing_user.email = SUPERADMIN_EMAIL
                 existing_user.is_superadmin = True
                 existing_user.is_active = True
@@ -60,12 +84,12 @@ async def create_superadmin():
                 print(f"\n✅ 超级管理员账户就绪!")
                 print(f"   用户名: {SUPERADMIN_USERNAME}")
                 print(f"   邮箱: {SUPERADMIN_EMAIL}")
-                print(f"   密码: {SUPERADMIN_PASSWORD}")
+                print("   密码: 已配置（不显示明文）")
                 return True
             else:
                 # Upgrade existing user to superadmin
                 print(f"用户 '{SUPERADMIN_USERNAME}' 已存在，升级为超级管理员...")
-                existing_user.hashed_password = get_password_hash(SUPERADMIN_PASSWORD)
+                existing_user.hashed_password = get_password_hash(superadmin_password)
                 existing_user.email = SUPERADMIN_EMAIL
                 existing_user.is_superadmin = True
                 existing_user.is_active = True
@@ -74,7 +98,7 @@ async def create_superadmin():
                 print(f"\n✅ 已升级为超级管理员!")
                 print(f"   用户名: {SUPERADMIN_USERNAME}")
                 print(f"   邮箱: {SUPERADMIN_EMAIL}")
-                print(f"   密码: {SUPERADMIN_PASSWORD}")
+                print("   密码: 已配置（不显示明文）")
                 return True
 
         # Check if email exists
@@ -86,7 +110,7 @@ async def create_superadmin():
             # Update existing user with this email to be superadmin
             print(f"邮箱 '{SUPERADMIN_EMAIL}' 已被使用，更新该账户为超级管理员...")
             existing_email_user.username = SUPERADMIN_USERNAME
-            existing_email_user.hashed_password = get_password_hash(SUPERADMIN_PASSWORD)
+            existing_email_user.hashed_password = get_password_hash(superadmin_password)
             existing_email_user.is_superadmin = True
             existing_email_user.is_active = True
             existing_email_user.role = "admin"
@@ -94,7 +118,7 @@ async def create_superadmin():
             print(f"\n✅ 已更新为超级管理员!")
             print(f"   用户名: {SUPERADMIN_USERNAME}")
             print(f"   邮箱: {SUPERADMIN_EMAIL}")
-            print(f"   密码: {SUPERADMIN_PASSWORD}")
+            print("   密码: 已配置（不显示明文）")
             return True
 
         # Create platform organization for superadmin
@@ -119,7 +143,7 @@ async def create_superadmin():
         superadmin = User(
             username=SUPERADMIN_USERNAME,
             email=SUPERADMIN_EMAIL,
-            hashed_password=get_password_hash(SUPERADMIN_PASSWORD),
+            hashed_password=get_password_hash(superadmin_password),
             full_name="超级管理员",
             role="admin",
             is_active=True,
@@ -132,7 +156,7 @@ async def create_superadmin():
         print(f"\n✅ 超级管理员创建成功!")
         print(f"   用户名: {SUPERADMIN_USERNAME}")
         print(f"   邮箱: {SUPERADMIN_EMAIL}")
-        print(f"   密码: {SUPERADMIN_PASSWORD}")
+        print("   密码: 已配置（不显示明文）")
         print(f"\n请使用以上账户信息登录管理平台。")
         return True
 

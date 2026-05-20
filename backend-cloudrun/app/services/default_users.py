@@ -19,6 +19,10 @@ from app.models.organization import Organization
 from app.models.user import User, UserRole
 
 
+class DefaultUserPasswordError(RuntimeError):
+    """Raised when production default user passwords are not explicitly configured."""
+
+
 @dataclass(frozen=True)
 class DefaultUserSpec:
     username: str
@@ -29,11 +33,41 @@ class DefaultUserSpec:
     is_superadmin: bool
 
 
+DEV_ONLY_DEFAULT_PASSWORDS = {
+    "superadmin": "yueenhb123..",
+    "wenyuan": "huanbao-1983",
+    "huanbao": "huanbao@123",
+}
+
+PASSWORD_ENV_VARS = {
+    "superadmin": "DEFAULT_SUPERADMIN_PASSWORD",
+    "wenyuan": "DEFAULT_WENYUAN_PASSWORD",
+    "huanbao": "DEFAULT_HUANBAO_PASSWORD",
+}
+
+
 def _bool_env(name: str, default: bool = False) -> bool:
     val = os.getenv(name)
     if val is None:
         return default
     return val.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _is_production_environment() -> bool:
+    environment = os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development"
+    return environment.strip().lower() == "production"
+
+
+def _resolve_default_password(username: str) -> str:
+    env_name = PASSWORD_ENV_VARS[username]
+    password = os.getenv(env_name)
+    if password:
+        return password
+    if _is_production_environment():
+        raise DefaultUserPasswordError(
+            f"{env_name} is required when bootstrapping default users in production"
+        )
+    return DEV_ONLY_DEFAULT_PASSWORDS[username]
 
 
 def _looks_like_supported_hash(hashed_password: str | None) -> bool:
@@ -44,12 +78,12 @@ def _looks_like_supported_hash(hashed_password: str | None) -> bool:
 
 
 def get_default_user_specs() -> list[DefaultUserSpec]:
-    # Allow overriding passwords via env for safer production usage.
+    # Development keeps local bootstrap convenience; production requires env passwords.
     return [
         DefaultUserSpec(
             username="superadmin",
             email="yueenrs@yueentech.cn",
-            password=os.getenv("DEFAULT_SUPERADMIN_PASSWORD", "yueenhb123.."),
+            password=_resolve_default_password("superadmin"),
             full_name="超级管理员",
             role=UserRole.SUPERADMIN.value,
             is_superadmin=True,
@@ -57,7 +91,7 @@ def get_default_user_specs() -> list[DefaultUserSpec]:
         DefaultUserSpec(
             username="wenyuan",
             email="yueenxs@yueentech.cn",
-            password=os.getenv("DEFAULT_WENYUAN_PASSWORD", "huanbao-1983"),
+            password=_resolve_default_password("wenyuan"),
             full_name="技术文员",
             role=UserRole.DOC_EDITOR.value,
             is_superadmin=False,
@@ -65,7 +99,7 @@ def get_default_user_specs() -> list[DefaultUserSpec]:
         DefaultUserSpec(
             username="huanbao",
             email="yueenhb@163.com",
-            password=os.getenv("DEFAULT_HUANBAO_PASSWORD", "huanbao@123"),
+            password=_resolve_default_password("huanbao"),
             full_name="销售演示",
             role=UserRole.VIEWER.value,
             is_superadmin=False,

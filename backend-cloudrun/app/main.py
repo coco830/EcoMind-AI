@@ -37,9 +37,12 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting EcoMind-AI Backend", version=settings.app_version)
 
-    # Initialize PostgreSQL/MySQL
+    # Initialize local/dev schemas; production only validates migrated schema.
     await init_db()
-    logger.info("Database initialized (MySQL)")
+    logger.info(
+        "Database startup check complete",
+        schema_mutation_enabled=settings.environment != "production",
+    )
 
     # Ensure default platform users exist (idempotent, can be disabled via env)
     if settings.bootstrap_default_users:
@@ -54,7 +57,9 @@ async def lifespan(app: FastAPI):
                 await db.commit()
             logger.info("Default users ensured", **result)
         except Exception as e:
-            # Never block service startup due to bootstrap failures
+            if settings.environment == "production":
+                logger.error("Default user bootstrap failed in production", error=str(e))
+                raise
             logger.warning("Default user bootstrap failed", error=str(e))
 
     # Sync device health once at startup (offline alarms, etc.)
