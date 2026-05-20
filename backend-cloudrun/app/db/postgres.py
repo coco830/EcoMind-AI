@@ -3,12 +3,16 @@
 from collections.abc import AsyncGenerator
 from uuid import UUID as PyUUID
 
-from sqlalchemy import String, TypeDecorator, text
+import structlog
+from sqlalchemy import String, TypeDecorator, inspect, text
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import get_settings
+
+logger = structlog.get_logger(__name__)
 
 
 class GUID(TypeDecorator):
@@ -107,6 +111,15 @@ class Base(DeclarativeBase):
     pass
 
 
+def _is_production() -> bool:
+    return _fresh_settings.environment == "production"
+
+
+def _load_model_metadata() -> None:
+    """Import ORM models so Base.metadata is complete before schema checks."""
+    import app.models  # noqa: F401
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for getting async database session."""
     async with AsyncSessionLocal() as session:
@@ -120,8 +133,53 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-async def init_db() -> None:
-    """Initialize database tables."""
+async def check_schema() -> None:
+    """Validate that the database schema already exists.
+
+    Production startup must not mutate schema. Deployments should run Alembic
+    migrations before the service starts.
+    """
+    _load_model_metadata()
+    required_tables = set(Base.metadata.tables)
+    if not required_tables:
+        raise RuntimeError("No SQLAlchemy table metadata is registered")
+
+    async with engine.connect() as conn:
+        existing_tables = await conn.run_sync(
+            lambda sync_conn: set(inspect(sync_conn).get_table_names())
+        )
+
+    missing_tables = sorted(required_tables - existing_tables)
+    if missing_tables:
+        logger.error("Database schema check failed", missing_tables=missing_tables)
+        raise RuntimeError(
+            "Database schema is not initialized; run Alembic migrations before "
+            "starting production. Missing tables: {}".format(", ".join(missing_tables))
+        )
+
+    logger.info("Database schema check passed", table_count=len(required_tables))
+
+
+async def init_db(*, mutate_schema: bool | None = None) -> None:
+    """Initialize or validate database schema.
+
+    Development/test defaults to local schema initialization. Production defaults
+    to a read-only schema check and refuses create_all/ensure_* mutations.
+    """
+    if mutate_schema is None:
+        mutate_schema = not _is_production()
+
+    if not mutate_schema:
+        await check_schema()
+        return
+
+    if _is_production():
+        raise RuntimeError(
+            "Production schema mutations must use Alembic or explicit migration tooling; "
+            "init_db() will not run create_all/ensure_* in production."
+        )
+
+    _load_model_metadata()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -191,8 +249,12 @@ async def _ensure_alarm_sms_columns() -> None:
                             "sms_sent_count INTEGER NOT NULL DEFAULT 0"
                         )
                     )
-                except Exception:
-                    pass  # Column might already exist
+                except SQLAlchemyError as exc:
+                    _handle_schema_adjustment_error(
+                        exc,
+                        table="alarms",
+                        column="sms_sent_count",
+                    )
             if "last_sms_time" not in columns:
                 try:
                     await conn.execute(
@@ -201,8 +263,12 @@ async def _ensure_alarm_sms_columns() -> None:
                             "last_sms_time DATETIME NULL"
                         )
                     )
-                except Exception:
-                    pass
+                except SQLAlchemyError as exc:
+                    _handle_schema_adjustment_error(
+                        exc,
+                        table="alarms",
+                        column="last_sms_time",
+                    )
         else:
             result = await conn.execute(
                 text(
@@ -379,8 +445,8 @@ async def _ensure_mysql_table_columns(conn, table: str, columns: dict[str, str])
             continue
         try:
             await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN `{name}` {ddl}"))
-        except Exception:
-            pass
+        except SQLAlchemyError as exc:
+            _handle_schema_adjustment_error(exc, table=table, column=name)
 
 
 async def _ensure_postgres_columns(conn) -> None:
@@ -475,5 +541,35 @@ async def _ensure_cascade_delete_fks() -> None:
                         f"FOREIGN KEY (`device_id`) REFERENCES `devices` (`id`) ON DELETE CASCADE"
                     )
                 )
-            except Exception:
-                pass  # Best effort
+            except SQLAlchemyError as exc:
+                _handle_schema_adjustment_error(
+                    exc,
+                    table=table_name,
+                    operation="ensure ON DELETE CASCADE",
+                )
+
+
+def _handle_schema_adjustment_error(
+    exc: SQLAlchemyError,
+    *,
+    table: str,
+    column: str | None = None,
+    operation: str = "add column",
+) -> None:
+    if _is_production():
+        logger.error(
+            "Schema adjustment failed in production",
+            table=table,
+            column=column,
+            operation=operation,
+            error=str(exc),
+        )
+        raise exc
+
+    logger.warning(
+        "Schema adjustment skipped after database error",
+        table=table,
+        column=column,
+        operation=operation,
+        error=str(exc),
+    )

@@ -33,6 +33,7 @@ Device/gateway helpers
 - `app/models/` contains persistence models.
 - `app/db/` owns database sessions and storage clients.
 - `alembic/` owns database schema migration history.
+- Production startup validates migrated database schema only; it does not run `create_all` or best-effort `ensure_*` schema mutations.
 
 ## Frontend Layers
 
@@ -56,6 +57,7 @@ Frontend surfaces should consume backend contracts rather than duplicating backe
 - `check` - compile Python, run focused backend regressions, and run available type checks.
 - `test` - run backend pytest regressions.
 - `lsp` - run Pyright and frontend type checks where local dependencies exist.
+- `db` - run database bootstrap and production schema-mutation guardrail checks.
 - `all` - run all local gates.
 
 Git hooks call `python .\verify.py check` before push.

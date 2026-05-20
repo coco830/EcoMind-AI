@@ -205,6 +205,11 @@ Agent / 外部系统：
 - `MYSQL_DATABASE`
 - `MYSQL_USER`
 - `MYSQL_PASSWORD`
+- `ENVIRONMENT=production`：生产启动只做数据库 schema check，不自动建表或补列
+- `DEFAULT_SUPERADMIN_PASSWORD`
+- `DEFAULT_WENYUAN_PASSWORD`
+- `DEFAULT_HUANBAO_PASSWORD`
+- `SUPERADMIN_PASSWORD`：仅 `backend-cloudrun/scripts/init_superadmin.py` 使用
 
 ### 7.2 Spark 大模型
 
@@ -235,6 +240,10 @@ Agent / 外部系统：
 - `backend-cloudrun/tests/test_latest_data_status_regression.py`
 - `backend-cloudrun/tests/test_openapi_integration_endpoints.py`
 
+本地数据库自动化护栏：
+
+- `python .\verify.py db`
+
 GitHub Actions：
 
 - `.github/workflows/backend-frequency-regression.yml`
@@ -250,6 +259,7 @@ GitHub Actions：
 - [docs/MINIPROGRAM_ECOMIND_OPENAPI.md](docs/MINIPROGRAM_ECOMIND_OPENAPI.md)
 - [docs/ECOMIND_PLATFORM_ALIGNMENT.md](docs/ECOMIND_PLATFORM_ALIGNMENT.md)
 - [docs/VIDEO_ENTERPRISE_ACCESS_CHECKLIST.md](docs/VIDEO_ENTERPRISE_ACCESS_CHECKLIST.md)
+- [docs/DB_AUTOMATION.md](docs/DB_AUTOMATION.md)
 - [docs/openapi_agent_schema.json](docs/openapi_agent_schema.json)
 - [docs/openclaw_agent_prompt.md](docs/openclaw_agent_prompt.md)
 - [docs/sewage-processing-station README.md](docs/sewage-processing-station%20README.md)

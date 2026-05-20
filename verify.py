@@ -102,6 +102,11 @@ def test() -> None:
     print("\nDONE: verify test PASS")
 
 
+def db() -> None:
+    run([python_executable(), "scripts/verify_db_automation.py"], cwd=BACKEND)
+    print("\nDONE: verify db PASS")
+
+
 def security() -> None:
     print("\nNo project-specific security scanner configured yet.")
     print("DONE: verify security PASS")
@@ -119,13 +124,14 @@ def main() -> None:
         "target",
         nargs="?",
         default="check",
-        choices=["check", "test", "lsp", "security", "all"],
+        choices=["check", "test", "lsp", "db", "security", "all"],
     )
     args = parser.parse_args()
     {
         "check": check,
         "test": test,
         "lsp": lsp,
+        "db": db,
         "security": security,
         "all": all_checks,
     }[args.target]()

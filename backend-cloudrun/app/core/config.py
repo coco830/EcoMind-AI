@@ -12,18 +12,24 @@ import secrets
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _is_production_environment() -> bool:
     """Check if running in production environment."""
-    return os.getenv("ENVIRONMENT", "development").lower() == "production"
+    environment = os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development"
+    return environment.lower() == "production"
 
 
 def _generate_dev_secret(prefix: str = "dev") -> str:
     """Generate a random secret for development use only."""
     return f"{prefix}_{secrets.token_hex(32)}"
+
+
+def _default_environment() -> str:
+    """Support legacy APP_ENV while preferring ENVIRONMENT."""
+    return os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development"
 
 
 class Settings(BaseSettings):
@@ -44,7 +50,9 @@ class Settings(BaseSettings):
     app_name: str = "EcoMind-AI"
     app_version: str = "1.0.0"
     debug: bool = False
-    environment: Literal["development", "staging", "production"] = "development"
+    environment: Literal["development", "staging", "production"] = Field(
+        default_factory=_default_environment
+    )
 
     # Server
     host: str = "0.0.0.0"

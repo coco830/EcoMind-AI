@@ -14,6 +14,7 @@ Usage:
   python scripts/init_users.py
   python scripts/init_users.py --db-url "mysql+aiomysql://..."
   python scripts/init_users.py --create-tables
+  DEFAULT_SUPERADMIN_PASSWORD='...' DEFAULT_WENYUAN_PASSWORD='...' DEFAULT_HUANBAO_PASSWORD='...' python scripts/init_users.py
 
 Default accounts:
   1) superadmin: 超级管理员（环保管家）
@@ -40,7 +41,7 @@ USERS = [
     {
         "username": "superadmin",
         "email": "yueenrs@yueentech.cn",
-        "password": "yueenhb123..",
+        "password_env": "DEFAULT_SUPERADMIN_PASSWORD",
         "full_name": "超级管理员",
         "role": "superadmin",
         "is_superadmin": True,
@@ -48,7 +49,7 @@ USERS = [
     {
         "username": "wenyuan",
         "email": "yueenxs@yueentech.cn",
-        "password": "huanbao-1983",
+        "password_env": "DEFAULT_WENYUAN_PASSWORD",
         "full_name": "技术文员",
         "role": "doc_editor",
         "is_superadmin": False,
@@ -56,12 +57,50 @@ USERS = [
     {
         "username": "huanbao",
         "email": "yueenhb@163.com",
-        "password": "huanbao@123",
+        "password_env": "DEFAULT_HUANBAO_PASSWORD",
         "full_name": "销售演示",
         "role": "viewer",
         "is_superadmin": False,
     },
 ]
+
+DEV_ONLY_DEFAULT_PASSWORDS = {
+    "superadmin": "yueenhb123..",
+    "wenyuan": "huanbao-1983",
+    "huanbao": "huanbao@123",
+}
+
+
+class PasswordConfigurationError(RuntimeError):
+    """Raised when production bootstrap passwords are not explicitly configured."""
+
+
+def _is_production_environment() -> bool:
+    environment = os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development"
+    return environment.strip().lower() == "production"
+
+
+def _resolve_password(username: str, env_name: str) -> str:
+    password = os.getenv(env_name)
+    if password:
+        return password
+    if _is_production_environment():
+        raise PasswordConfigurationError(
+            f"{env_name} is required when initializing users in production"
+        )
+    return DEV_ONLY_DEFAULT_PASSWORDS[username]
+
+
+def get_user_specs() -> list[Dict[str, Any]]:
+    specs: list[Dict[str, Any]] = []
+    for user in USERS:
+        spec = dict(user)
+        spec["password"] = _resolve_password(
+            username=str(user["username"]),
+            env_name=str(user["password_env"]),
+        )
+        specs.append(spec)
+    return specs
 
 
 def _now_utc_naive() -> datetime:
@@ -369,6 +408,7 @@ async def _upsert_user(session: AsyncSession, user: Dict[str, Any], platform_org
 
 
 async def _run(db_url: str, create_tables: bool) -> None:
+    users = get_user_specs()
     engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
@@ -391,7 +431,7 @@ async def _run(db_url: str, create_tables: bool) -> None:
             await _migrate_old_accounts(session)
 
             print("\n创建/更新用户账号...")
-            for u in USERS:
+            for u in users:
                 await _upsert_user(session, u, platform_org_id)
 
             await session.commit()
@@ -405,11 +445,11 @@ async def _run(db_url: str, create_tables: bool) -> None:
             "doc_editor": "文档编辑 (文档读写 + 其他只读)",
             "viewer": "只读用户 (所有只读，用于演示)",
         }
-        for u in USERS:
+        for u in users:
             print("  - {} ({})".format(u["full_name"], role_desc.get(u["role"], u["role"])))
             print("    用户名: {}".format(u["username"]))
             print("    邮  箱: {}".format(u["email"]))
-            print("    密  码: {}".format(u["password"]))
+            print("    密  码: 已配置（不显示明文）")
 
     finally:
         await engine.dispose()
