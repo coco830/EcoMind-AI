@@ -1,0 +1,53 @@
+# Git Hooks
+
+## Installation
+
+Project hooks live in `.githooks/` and call PowerShell implementations from `scripts/hooks/`.
+
+Install them for this repository:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\hooks\Install-GitHooks.ps1
+```
+
+This sets:
+
+```powershell
+git config core.hooksPath .githooks
+```
+
+## Hooks
+
+- `pre-commit`
+  - Blocks commits on protected branches.
+  - Blocks staged env files, logs, generated output, dependency folders, coverage, temp files, and local databases.
+  - Scans staged text files for common secret patterns.
+
+- `commit-msg`
+  - Blocks empty commit messages.
+  - Blocks subjects longer than 120 characters.
+  - Blocks vague subjects such as `wip`, `tmp`, `test`, `fix`, or `update`.
+
+- `pre-push`
+  - Blocks pushes from protected branches.
+  - Runs `python .\verify.py check`.
+
+- `post-merge`
+  - Runs only when the current branch is `main`.
+  - Deletes local and remote branches already merged into `main`.
+  - Removes clean auxiliary worktrees.
+  - Keeps unmerged branches and dirty worktrees.
+
+## Bypass
+
+Use only when you understand the risk:
+
+```powershell
+$env:SKIP_PROJECT_GIT_HOOKS = "1"
+```
+
+Remove it afterward:
+
+```powershell
+Remove-Item Env:\SKIP_PROJECT_GIT_HOOKS
+```

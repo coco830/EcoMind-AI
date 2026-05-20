@@ -1,0 +1,454 @@
+openapi: 3.0.3
+info:
+  title: EcoMind-AI Alarm API
+  description: 报警管理相关接口
+  version: 1.0.0
+
+paths:
+  /api/alarms:
+    get:
+      summary: 获取报警列表
+      tags:
+        - Alarms
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: device_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: 按设备筛选
+        - name: organization_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: 按组织筛选
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [exceed, offline, anomaly, fault, maintenance]
+          description: 按报警类型筛选
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [critical, warning, info]
+          description: 按报警级别筛选
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, acknowledged, resolved, ignored]
+          description: 按处理状态筛选
+        - name: start_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: 开始时间
+        - name: end_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: 结束时间
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: 报警列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmListResponse'
+
+  /api/alarms/realtime:
+    get:
+      summary: 获取实时报警 (WebSocket 升级)
+      description: 建立 WebSocket 连接获取实时报警推送
+      tags:
+        - Alarms
+      security:
+        - cookieAuth: []
+      responses:
+        '101':
+          description: Switching Protocols
+        '200':
+          description: 最近报警列表 (非 WebSocket 回退)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeAlarmResponse'
+
+  /api/alarms/{alarm_id}:
+    get:
+      summary: 获取报警详情
+      tags:
+        - Alarms
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: alarm_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 报警详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmDetailResponse'
+        '404':
+          description: 报警不存在
+
+  /api/alarms/{alarm_id}/acknowledge:
+    post:
+      summary: 确认报警
+      tags:
+        - Alarms
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: alarm_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+                  maxLength: 500
+                  description: 确认备注
+      responses:
+        '200':
+          description: 确认成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmResponse'
+        '400':
+          description: 状态不允许确认
+
+  /api/alarms/{alarm_id}/resolve:
+    post:
+      summary: 解决报警
+      tags:
+        - Alarms
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: alarm_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resolution:
+                  type: string
+                  maxLength: 1000
+                  description: 解决说明
+      responses:
+        '200':
+          description: 解决成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmResponse'
+
+  /api/alarms/{alarm_id}/ignore:
+    post:
+      summary: 忽略报警
+      tags:
+        - Alarms
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: alarm_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: 忽略原因
+      responses:
+        '200':
+          description: 忽略成功
+
+  /api/alarms/batch/acknowledge:
+    post:
+      summary: 批量确认报警
+      tags:
+        - Alarms
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - alarm_ids
+              properties:
+                alarm_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  maxItems: 100
+                note:
+                  type: string
+      responses:
+        '200':
+          description: 批量确认成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success_count:
+                    type: integer
+                  failed_count:
+                    type: integer
+
+  /api/alarms/stats:
+    get:
+      summary: 获取报警统计
+      tags:
+        - Alarms
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: organization_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [today, week, month]
+            default: today
+      responses:
+        '200':
+          description: 统计数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmStatsResponse'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+
+  schemas:
+    AlarmResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+          format: uuid
+        device_name:
+          type: string
+        device_mn:
+          type: string
+        type:
+          type: string
+          enum: [exceed, offline, anomaly, fault, maintenance]
+        type_name:
+          type: string
+        level:
+          type: string
+          enum: [critical, warning, info]
+        param_code:
+          type: string
+        param_name:
+          type: string
+        threshold:
+          type: number
+        actual_value:
+          type: number
+        message:
+          type: string
+        status:
+          type: string
+          enum: [pending, acknowledged, resolved, ignored]
+        acknowledged_by:
+          type: string
+        acknowledged_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    AlarmDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/AlarmResponse'
+        - type: object
+          properties:
+            device:
+              $ref: '#/components/schemas/DeviceBrief'
+            related_data:
+              type: array
+              items:
+                $ref: '#/components/schemas/RelatedDataPoint'
+            history:
+              type: array
+              items:
+                $ref: '#/components/schemas/AlarmHistoryEntry'
+
+    AlarmListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlarmResponse'
+
+    RealtimeAlarmResponse:
+      type: object
+      properties:
+        alarms:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlarmResponse'
+          maxItems: 50
+        total_pending:
+          type: integer
+
+    AlarmStatsResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        by_status:
+          type: object
+          properties:
+            pending:
+              type: integer
+            acknowledged:
+              type: integer
+            resolved:
+              type: integer
+            ignored:
+              type: integer
+        by_type:
+          type: object
+          additionalProperties:
+            type: integer
+        by_level:
+          type: object
+          properties:
+            critical:
+              type: integer
+            warning:
+              type: integer
+            info:
+              type: integer
+        trend:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              count:
+                type: integer
+
+    DeviceBrief:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        mn:
+          type: string
+        name:
+          type: string
+        organization_name:
+          type: string
+
+    RelatedDataPoint:
+      type: object
+      properties:
+        ts:
+          type: string
+          format: date-time
+        param_code:
+          type: string
+        param_name:
+          type: string
+        value:
+          type: number
+        flag:
+          type: string
+
+    AlarmHistoryEntry:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [created, acknowledged, resolved, ignored]
+        user:
+          type: string
+        note:
+          type: string
+        timestamp:
+          type: string
+          format: date-time

@@ -1,0 +1,150 @@
+import { createRouter, createWebHashHistory } from 'vue-router'
+import type { RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+
+const routes: RouteRecordRaw[] = [
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('@/views/Login.vue'),
+    meta: { requiresAuth: false }
+  },
+  {
+    path: '/register',
+    name: 'Register',
+    component: () => import('@/views/Register.vue'),
+    meta: { requiresAuth: false }
+  },
+  {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('@/views/ForgotPassword.vue'),
+    meta: { requiresAuth: false }
+  },
+  {
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: () => import('@/views/ResetPassword.vue'),
+    meta: { requiresAuth: false }
+  },
+  {
+    path: '/',
+    component: () => import('@/layouts/MainLayout.vue'),
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: '',
+        name: 'Dashboard',
+        component: () => import('@/views/Dashboard.vue')
+      },
+      {
+        path: 'devices',
+        name: 'Devices',
+        component: () => import('@/views/Devices.vue')
+      },
+      {
+        path: 'data',
+        name: 'Data',
+        component: () => import('@/views/Data.vue')
+      },
+      {
+        path: 'alarms',
+        name: 'Alarms',
+        component: () => import('@/views/Alarms.vue')
+      },
+      {
+        path: 'video',
+        name: 'VideoCenter',
+        component: () => import('@/views/VideoCenter.vue')
+      },
+      {
+        path: 'reports',
+        name: 'Reports',
+        component: () => import('@/views/Reports.vue')
+      },
+      {
+        path: 'self-inspection',
+        name: 'SelfInspection',
+        component: () => import('@/views/SelfInspection.vue')
+      },
+      {
+        path: 'settings',
+        name: 'Settings',
+        component: () => import('@/views/Settings.vue')
+      },
+      {
+        path: 'invitations',
+        name: 'Invitations',
+        component: () => import('@/views/Invitations.vue'),
+        meta: { requiresSuperAdmin: true }
+      },
+      {
+        path: 'regulator',
+        name: 'RegulatorDashboard',
+        component: () => import('@/views/RegulatorDashboard.vue'),
+        meta: { requiresRegulator: true }
+      },
+      {
+        path: 'regulator/reports',
+        name: 'RegulatorReports',
+        component: () => import('@/views/RegulatorReports.vue'),
+        meta: { requiresRegulator: true }
+      },
+      {
+        path: 'regulator/brief',
+        name: 'RegulatorBrief',
+        redirect: { name: 'RegulatorReports' },
+        meta: { requiresRegulator: true }
+      }
+      ]
+    },
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    component: () => import('@/views/NotFound.vue')
+  }
+]
+
+const router = createRouter({
+  history: createWebHashHistory('/ecomind-ai/'),
+  routes
+})
+
+router.beforeEach(async (to, _from, next) => {
+  const authStore = useAuthStore()
+
+  // If authenticated but user data not loaded, fetch it
+  if (authStore.isAuthenticated && !authStore.user) {
+    try {
+      await authStore.fetchUser()
+    } catch {
+      // Token invalid, redirect to login
+      next({ name: 'Login', query: { redirect: to.fullPath } })
+      return
+    }
+  }
+
+  if (to.meta.requiresAuth !== false && !authStore.isAuthenticated) {
+    next({ name: 'Login', query: { redirect: to.fullPath } })
+  } else if ((to.name === 'Login' || to.name === 'Register' || to.name === 'ForgotPassword' || to.name === 'ResetPassword') && authStore.isAuthenticated) {
+    next({ name: authStore.user?.role === 'regulator' ? 'RegulatorDashboard' : 'Dashboard' })
+  } else {
+    const isRegulatorRole = authStore.user?.role === 'regulator'
+    const isSuperAdmin = authStore.user?.is_superadmin === true
+    const isRegulatorRoute = to.path.startsWith('/regulator')
+
+    if (isRegulatorRole && !isRegulatorRoute && to.meta.requiresAuth !== false) {
+      next({ name: 'RegulatorDashboard' })
+      return
+    }
+
+    if (!isRegulatorRole && !isSuperAdmin && isRegulatorRoute) {
+      next({ name: 'Dashboard' })
+      return
+    }
+
+    next()
+  }
+})
+
+export default router

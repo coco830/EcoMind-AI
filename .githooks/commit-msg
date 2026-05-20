@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/hooks/CommitMsg.ps1 "$1"
