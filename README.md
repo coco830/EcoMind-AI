@@ -115,6 +115,15 @@ EcoMind-AI/
 └── specs/                          # 早期规格设计资料
 ```
 
+补充工程上下文入口：
+
+- `AGENTS.md`：AI/agent 开发规则与项目级护栏
+- `CODEMAP.md`：代码结构、模块边界、关键调用链
+- `docs/ARCHITECTURE.md`：架构说明与业务边界
+- `docs/LSP.md`：LSP / Pyright / 前端类型检查配置
+- `docs/GIT_HOOKS.md`：项目级 Git hooks 安装与行为说明
+- `verify.py`：统一本地验证入口
+
 ## 5. 核心业务边界
 
 ### 5.1 企业侧 AI 运维报告

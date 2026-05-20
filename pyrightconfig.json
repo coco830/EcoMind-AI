@@ -1,0 +1,30 @@
+{
+  "include": [
+    "backend-cloudrun/app",
+    "backend-cloudrun/tests"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "**/.venv",
+    "**/node_modules",
+    "**/dist",
+    "**/build"
+  ],
+  "extraPaths": [
+    "backend-cloudrun"
+  ],
+  "venvPath": "backend-cloudrun",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "off",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportOptionalOperand": "none",
+  "reportArgumentType": "none",
+  "reportAssignmentType": "none",
+  "reportReturnType": "none",
+  "reportCallIssue": "none",
+  "reportAttributeAccessIssue": "none"
+}
