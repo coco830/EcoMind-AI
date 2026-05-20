@@ -24,7 +24,7 @@ logger = structlog.get_logger()
 
 # Use uvloop for better async performance (optional, graceful fallback)
 try:
-    import uvloop
+    import uvloop  # type: ignore[reportMissingImports]  # Linux/macOS-only optional accelerator.
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     logger.info("Using uvloop for async performance")
 except ImportError:
