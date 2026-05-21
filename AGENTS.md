@@ -43,6 +43,20 @@ python .\verify.py all
 
 `spec` parses `specs/**/*.feature` with `gherkin-v39`. `check` is intended for pre-push use and includes the spec gate plus low-cost syntax/type/test gates where local dependencies are available.
 
+## BDD And Domain Capture
+
+- `specs/**/*.feature` - machine-parseable Gherkin behavior contracts.
+- `specs/**/*.feature.md` - human/AI-readable behavior notes, business context, business rules, forbidden behavior, and domain rationale.
+- `specs/_glossary.md` - confirmed terms only.
+- `specs/_open-questions.md` - unresolved business rules and domain decisions.
+
+Domain capture priority:
+
+1. Concrete feature behavior goes in `specs/**/*.feature.md`.
+2. Term definitions go in `specs/_glossary.md`.
+3. Unconfirmed business questions go in `specs/_open-questions.md`.
+4. Stable cross-module decisions move to `docs/adr/` or `docs/domain/`.
+
 ## Domain Guardrails
 
 - Video evidence supports risk review and evidence closure; it must not be presented as a legal monitoring conclusion.
