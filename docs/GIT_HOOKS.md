@@ -22,6 +22,7 @@ git config core.hooksPath .githooks
   - Blocks commits on protected branches.
   - Blocks staged env files, logs, generated output, dependency folders, coverage, temp files, and local databases.
   - Scans staged text files for common secret patterns.
+  - Warns when staged implementation/tooling changes may require updates to `CODEMAP.md`, `AGENTS.md`, architecture, LSP, Git hook, database automation, or README docs.
 
 - `commit-msg`
   - Blocks empty commit messages.
@@ -59,4 +60,16 @@ Remove it afterward:
 
 ```powershell
 Remove-Item Env:\SKIP_PROJECT_GIT_HOOKS
+```
+
+Docs drift warnings can be made strict for a shell:
+
+```powershell
+$env:DOCS_DRIFT_STRICT = "1"
+```
+
+To skip only the docs drift reminder:
+
+```powershell
+$env:SKIP_DOCS_DRIFT_HOOK = "1"
 ```

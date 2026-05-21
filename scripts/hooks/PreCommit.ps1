@@ -100,4 +100,12 @@ if ($matches.Count -gt 0) {
   exit 1
 }
 
+$docsDrift = Join-Path $PSScriptRoot "Check-DocsDrift.ps1"
+if (Test-Path -LiteralPath $docsDrift -PathType Leaf) {
+  & $docsDrift -StagedFiles $staged
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+}
+
 Write-Host "project pre-commit PASS"
