@@ -84,6 +84,7 @@ def login_typecheck() -> None:
 def check() -> None:
     compile_python()
     test_backend()
+    spec()
     pyright()
     frontend_typecheck()
     login_typecheck()
@@ -100,6 +101,11 @@ def lsp() -> None:
 def test() -> None:
     test_backend()
     print("\nDONE: verify test PASS")
+
+
+def spec() -> None:
+    run([python_executable(), "scripts/check_specs.py"], cwd=ROOT)
+    print("\nDONE: verify spec PASS")
 
 
 def db() -> None:
@@ -124,13 +130,14 @@ def main() -> None:
         "target",
         nargs="?",
         default="check",
-        choices=["check", "test", "lsp", "db", "security", "all"],
+        choices=["check", "test", "lsp", "spec", "db", "security", "all"],
     )
     args = parser.parse_args()
     {
         "check": check,
         "test": test,
         "lsp": lsp,
+        "spec": spec,
         "db": db,
         "security": security,
         "all": all_checks,

@@ -25,7 +25,8 @@ EcoMind-AI is a multi-surface product:
 | `frontend/src/` | Vue console source | Main business UI and API clients. |
 | `ecosense-login/` | React login shell | Small Vite-based entry/login surface. |
 | `docs/` | Documentation | Architecture, hooks, LSP, integrations, product decisions. |
-| `specs/` | Feature specs | Historical planning and MVP specification records. |
+| `specs/` | Feature specs | BDD `.feature` files, domain glossary, open questions, and historical planning records. |
+| `scripts/check_specs.py` | BDD parser gate | Runs `gherkin-v39` against `specs/**/*.feature` through `verify.py spec`. |
 
 ## Backend Call Paths
 
@@ -75,6 +76,7 @@ api/v1/video.py
 ## Verification Entry Points
 
 - `python .\verify.py check` - local pre-push gate.
+- `python .\verify.py spec` - Gherkin parser gate for `specs/**/*.feature`.
 - `python .\verify.py test` - backend regression tests.
 - `python .\verify.py lsp` - Pyright and frontend type checks where dependencies are available.
 - `python .\verify.py all` - complete local gate.

@@ -22,6 +22,7 @@ git config core.hooksPath .githooks
   - Blocks commits on protected branches.
   - Blocks staged env files, logs, generated output, dependency folders, coverage, temp files, and local databases.
   - Scans staged text files for common secret patterns.
+  - Runs `python .\verify.py spec` when staged files include `specs/**/*.feature`.
   - Warns when staged implementation/tooling changes may require updates to `CODEMAP.md`, `AGENTS.md`, architecture, LSP, Git hook, database automation, or README docs.
 
 - `commit-msg`
@@ -31,6 +32,7 @@ git config core.hooksPath .githooks
 
 - `pre-push`
   - Blocks pushes from protected branches unless a human has explicitly approved the mainline push.
+  - Runs `python .\verify.py spec` first when the push range includes `specs/**/*.feature`.
   - Runs `python .\verify.py check`.
   - For human-approved protected branch pushes, also runs `python .\verify.py test`.
 

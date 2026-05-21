@@ -24,6 +24,27 @@ if ($isProtectedBranch) {
   Write-Host "Human-approved protected branch push detected for '$branch'."
 }
 
+$upstream = (& git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>$null)
+$changedFeatureSpecs = @()
+if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($upstream)) {
+  $changedFeatureSpecs = @(git diff --name-only --diff-filter=ACMR "$($upstream.Trim())...HEAD" -- "specs/**/*.feature")
+} else {
+  & git rev-parse --verify origin/main 1>$null 2>$null
+  if ($LASTEXITCODE -eq 0) {
+    $changedFeatureSpecs = @(git diff --name-only --diff-filter=ACMR "origin/main...HEAD" -- "specs/**/*.feature")
+  } else {
+    $changedFeatureSpecs = @(git diff-tree --no-commit-id --name-only -r HEAD -- "specs/**/*.feature")
+  }
+}
+
+if ($changedFeatureSpecs.Count -gt 0) {
+  Write-Host "Changed Gherkin specs detected in push range; running project gate: python .\verify.py spec"
+  & python .\verify.py spec
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+}
+
 Write-Host "Running project gate: python .\verify.py check"
 & python .\verify.py check
 if ($LASTEXITCODE -ne 0) {

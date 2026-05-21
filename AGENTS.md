@@ -13,6 +13,7 @@ This repository is not a regulator replacement system. Keep wording and behavior
 - Use a worktree for database migrations, cross-module behavior changes, auth/security changes, or large frontend/backend integration work.
 - Do not commit `.env`, logs, generated build output, local databases, or dependency folders.
 - Business behavior changes need a regression test or a minimal reproducible verification path before implementation.
+- Business workflows, AI output, reports, compliance wording, and domain judgement changes need a matching `specs/**/*.feature` scenario before implementation.
 - Merges to `main` require human approval.
 
 ## Project Map
@@ -34,12 +35,13 @@ Prefer the unified project entry:
 
 ```powershell
 python .\verify.py check
+python .\verify.py spec
 python .\verify.py test
 python .\verify.py lsp
 python .\verify.py all
 ```
 
-`check` is intended for pre-push use. It runs low-cost syntax/type/test gates where local dependencies are available.
+`spec` parses `specs/**/*.feature` with `gherkin-v39`. `check` is intended for pre-push use and includes the spec gate plus low-cost syntax/type/test gates where local dependencies are available.
 
 ## Domain Guardrails
 
@@ -52,6 +54,7 @@ python .\verify.py all
 ## Context Maintenance
 
 - Root `AGENTS.md` holds repository-wide rules only.
+- `specs/` holds BDD behavior specs, the domain glossary, and open business questions.
 - Child `AGENTS.md` files hold local constraints for important folders.
 - Keep `CODEMAP.md` current when module boundaries, data ownership, or important call paths change.
 - Keep `docs/ARCHITECTURE.md` current when deployment shape, API boundaries, or persistence responsibilities change.

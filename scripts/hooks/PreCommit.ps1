@@ -100,6 +100,15 @@ if ($matches.Count -gt 0) {
   exit 1
 }
 
+$stagedFeatureSpecs = @($staged | Where-Object { ($_ -replace '\\', '/') -match '^specs/.+\.feature$' })
+if ($stagedFeatureSpecs.Count -gt 0) {
+  Write-Host "Staged Gherkin specs detected; running project gate: python .\verify.py spec"
+  & python .\verify.py spec
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+}
+
 $docsDrift = Join-Path $PSScriptRoot "Check-DocsDrift.ps1"
 if (Test-Path -LiteralPath $docsDrift -PathType Leaf) {
   & $docsDrift -StagedFiles $staged

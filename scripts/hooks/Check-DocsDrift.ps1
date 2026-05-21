@@ -38,6 +38,10 @@ $contextPatterns = @(
   '^docs/LSP\.md$',
   '^docs/GIT_HOOKS\.md$',
   '^docs/DB_AUTOMATION\.md$',
+  '^specs/.*\.feature$',
+  '^specs/_glossary\.md$',
+  '^specs/_open-questions\.md$',
+  '^specs/README\.md$',
   '^README\.md$'
 )
 
