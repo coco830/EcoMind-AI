@@ -20,17 +20,14 @@
     "chaos": null,
     "dataQuality": null,
     "migration": "python .\\verify.py db",
-    "smoke": null,
-    "agentOps": "python .\\verify.py agents"
+    "smoke": null
   },
   "artifacts": {
     "reports": "reports/",
     "coverage": "coverage/",
     "e2eReport": "playwright-report/",
     "traces": "test-results/",
-    "logs": "logs/",
-    "afkReportTemplate": "verify/afk-test-report.md",
-    "afkReportSchema": "verify/afk-test-report.schema.json"
+    "logs": "logs/"
   },
   "environment": {
     "requiresDocker": false,

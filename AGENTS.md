@@ -45,16 +45,15 @@ python .\verify.py check
 python .\verify.py spec
 python .\verify.py test
 python .\verify.py lsp
-python .\verify.py agents
 python .\verify.py afk
 python .\verify.py all
 ```
 
-`spec` parses `specs/**/*.feature` with `gherkin-v39`. `agents` checks `docs/agents/skills-index.md`; regenerate it with `python .\verify.py agents --write` after agent routing inputs change. `afk` validates `verify/afk-test.config.json` and AFK report templates. `check` is intended for pre-push use and includes the spec, agent, AFK, and low-cost syntax/type/test gates where local dependencies are available.
+`spec` parses `specs/**/*.feature` with `gherkin-v39`. `check` is intended for pre-push use and includes the spec gate plus low-cost syntax/type/test gates where local dependencies are available. `afk` only validates the optional AFK testing config.
 
 For low-risk documentation, script, or narrow maintenance work, run the smallest relevant verification target first. Use `check` or `all` when the change touches shared behavior, public contracts, or release readiness.
 
-AFK testing tasks must start from `verify/afk-test.config.json` and deliver results with `verify/afk-test-report.md`.
+AFK testing tasks can start from `verify/afk-test.config.json`; use the user-level or protocol-source report template when a full AFK report is requested.
 
 ## BDD And Domain Capture
 
@@ -81,7 +80,6 @@ Domain capture priority:
 ## Context Maintenance
 
 - Root `AGENTS.md` holds repository-wide rules only.
-- `docs/agents/` holds generated skill routing context for agents.
 - `specs/` holds BDD behavior specs, the domain glossary, and open business questions.
 - Child `AGENTS.md` files hold local constraints for important folders.
 - Keep `CODEMAP.md` current when module boundaries, data ownership, or important call paths change.

@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parent
 BACKEND = ROOT / "backend-cloudrun"
 FRONTEND = ROOT / "frontend"
 LOGIN = ROOT / "ecosense-login"
-AGENT_OPS = ROOT / "scripts" / "agent-ops"
 VERIFY = ROOT / "verify"
 
 
@@ -48,26 +47,6 @@ def npm_command() -> str:
 
 def npx_command() -> str:
     return "npx.cmd" if os.name == "nt" else "npx"
-
-
-def node_command() -> str:
-    candidates = ["node.cmd", "node"] if os.name == "nt" else ["node"]
-    bundled = (
-        Path.home()
-        / ".cache"
-        / "codex-runtimes"
-        / "codex-primary-runtime"
-        / "dependencies"
-        / "node"
-        / "bin"
-        / ("node.exe" if os.name == "nt" else "node")
-    )
-    candidates.append(str(bundled))
-
-    for candidate in candidates:
-        if shutil.which(candidate):
-            return candidate
-    return candidates[0]
 
 
 def compile_python() -> None:
@@ -108,8 +87,6 @@ def check() -> None:
     compile_python()
     test_backend()
     spec()
-    agents(required=False)
-    afk()
     pyright()
     frontend_typecheck()
     login_typecheck()
@@ -133,35 +110,16 @@ def spec() -> None:
     print("\nDONE: verify spec PASS")
 
 
-def agents(*, write: bool = False, required: bool = True) -> None:
-    if not command_exists(node_command()):
-        message = "\nSKIP: node is not available; install Node.js to verify docs/agents/skills-index.md."
-        if required:
-            raise SystemExit(message.strip())
-        print(message)
-        return
-
-    script = "generate-skills-index.mjs" if write else "check-skills-index.mjs"
-    run([node_command(), str(AGENT_OPS / script)], cwd=ROOT)
-    action = "generated" if write else "checked"
-    print(f"\nDONE: verify agents {action} PASS")
-
-
 def afk() -> None:
     config_path = VERIFY / "afk-test.config.json"
-    report_template = VERIFY / "afk-test-report.md"
-    report_schema = VERIFY / "afk-test-report.schema.json"
-
-    for path in [config_path, report_template, report_schema]:
-        if not path.exists():
-            raise SystemExit(f"FAILED: missing {path.relative_to(ROOT)}")
+    if not config_path.exists():
+        raise SystemExit(f"FAILED: missing {config_path.relative_to(ROOT)}")
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
     for section in ["project", "baseline", "optional", "artifacts", "environment", "autonomy", "blockers"]:
         if section not in config:
             raise SystemExit(f"FAILED: {config_path.relative_to(ROOT)} missing section: {section}")
 
-    json.loads(report_schema.read_text(encoding="utf-8"))
     print("\nDONE: verify afk PASS")
 
 
@@ -187,19 +145,14 @@ def main() -> None:
         "target",
         nargs="?",
         default="check",
-        choices=["check", "test", "lsp", "spec", "agents", "afk", "db", "security", "all"],
+        choices=["check", "test", "lsp", "spec", "afk", "db", "security", "all"],
     )
-    parser.add_argument("--write", action="store_true", help="Regenerate generated verification artifacts.")
     args = parser.parse_args()
-    if args.write and args.target != "agents":
-        raise SystemExit("--write is only supported with: python .\\verify.py agents --write")
-
     {
         "check": check,
         "test": test,
         "lsp": lsp,
         "spec": spec,
-        "agents": lambda: agents(write=args.write),
         "afk": afk,
         "db": db,
         "security": security,

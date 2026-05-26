@@ -23,7 +23,6 @@ git config core.hooksPath .githooks
   - Blocks staged env files, logs, generated output, dependency folders, coverage, temp files, and local databases.
   - Scans staged text files for common secret patterns.
   - Runs `python .\verify.py spec` when staged files include `specs/**/*.feature`.
-  - Refreshes and checks `docs/agents/skills-index.md` when staged files touch agent routing inputs such as `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `.agents/`, `.claude/skills/`, `docs/agents/`, or `scripts/agent-ops/`.
   - Warns when staged implementation/tooling changes may require updates to `CODEMAP.md`, `AGENTS.md`, architecture, LSP, Git hook, database automation, or README docs.
 
 - `commit-msg`

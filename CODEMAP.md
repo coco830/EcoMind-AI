@@ -25,10 +25,8 @@ EcoMind-AI is a multi-surface product:
 | `frontend/src/` | Vue console source | Main business UI and API clients. |
 | `ecosense-login/` | React login shell | Small Vite-based entry/login surface. |
 | `docs/` | Documentation | Architecture, hooks, LSP, integrations, product decisions. |
-| `docs/agents/` | Agent routing docs | Generated skills index for choosing project/user SOPs without reading every skill file. |
 | `specs/` | Feature specs | BDD `.feature` files, domain glossary, open questions, and historical planning records. |
-| `verify/` | Verification config | AFK testing config and report/schema templates. |
-| `scripts/agent-ops/` | Agent operation scripts | Generates and checks `docs/agents/skills-index.md`. |
+| `verify/` | Verification config | Optional AFK testing config. |
 | `scripts/check_specs.py` | BDD parser gate | Runs `gherkin-v39` against `specs/**/*.feature` through `verify.py spec`. |
 
 ## Backend Call Paths
@@ -82,7 +80,5 @@ api/v1/video.py
 - `python .\verify.py spec` - Gherkin parser gate for `specs/**/*.feature`.
 - `python .\verify.py test` - backend regression tests.
 - `python .\verify.py lsp` - Pyright and frontend type checks where dependencies are available.
-- `python .\verify.py agents` - check generated agent skills index.
-- `python .\verify.py agents --write` - regenerate `docs/agents/skills-index.md`.
-- `python .\verify.py afk` - validate AFK test config and report templates.
+- `python .\verify.py afk` - validate optional AFK test config.
 - `python .\verify.py all` - complete local gate.

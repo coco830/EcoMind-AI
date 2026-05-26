@@ -113,14 +113,3 @@ TypeScript/JavaScript (前端):
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
-
-<!-- gitnexus:start -->
-## GitNexus
-
-Use GitNexus as a navigation aid for unfamiliar or risky code, not as ceremony for every small edit.
-
-- For non-trivial function/class/method changes, run impact analysis first and pay attention to HIGH or CRITICAL risk.
-- Before committing code changes, run `gitnexus_detect_changes()` when it helps confirm the affected scope.
-- For docs-only, config-only, generated index, or obvious low-risk maintenance, normal review plus relevant verification is enough.
-
-<!-- gitnexus:end -->

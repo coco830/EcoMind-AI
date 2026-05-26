@@ -57,8 +57,7 @@ Frontend surfaces should consume backend contracts rather than duplicating backe
 - `check` - compile Python, run focused backend regressions, and run available type checks.
 - `test` - run backend pytest regressions.
 - `lsp` - run Pyright and frontend type checks where local dependencies exist.
-- `agents` - verify generated agent skill routing index.
-- `afk` - validate AFK testing config and report templates.
+- `afk` - validate optional AFK testing config.
 - `db` - run database bootstrap and production schema-mutation guardrail checks.
 - `all` - run all local gates.
 
