@@ -12,9 +12,16 @@ This repository is not a regulator replacement system. Keep wording and behavior
 - Use a task branch for documentation, guardrail, or low-risk maintenance work.
 - Use a worktree for database migrations, cross-module behavior changes, auth/security changes, or large frontend/backend integration work.
 - Do not commit `.env`, logs, generated build output, local databases, or dependency folders.
-- Business behavior changes need a regression test or a minimal reproducible verification path before implementation.
-- Business workflows, AI output, reports, compliance wording, and domain judgement changes need a matching `specs/**/*.feature` scenario before implementation.
+- Material business behavior changes need a regression test or a minimal reproducible verification path.
+- When a change alters workflows, AI output, reports, compliance wording, or domain judgement, add or update the smallest useful `specs/**/*.feature` scenario. Pure docs, tooling, and mechanical refactors do not need BDD ceremony.
 - Merges to `main` require human approval.
+
+## Parallel Worktree Integration
+
+- Feature branches developed in parallel worktrees should prefer adding independent routes, services, pages, or modules.
+- Shared entry points, navigation wiring, router registration, and cross-feature exports should be connected by a dedicated integration branch.
+- Avoid having multiple agents edit the same public entry file unless the integration branch owns that change.
+- When a feature needs a shared contract, document the expected handoff surface before parallel implementation starts.
 
 ## Project Map
 
@@ -38,10 +45,16 @@ python .\verify.py check
 python .\verify.py spec
 python .\verify.py test
 python .\verify.py lsp
+python .\verify.py agents
+python .\verify.py afk
 python .\verify.py all
 ```
 
-`spec` parses `specs/**/*.feature` with `gherkin-v39`. `check` is intended for pre-push use and includes the spec gate plus low-cost syntax/type/test gates where local dependencies are available.
+`spec` parses `specs/**/*.feature` with `gherkin-v39`. `agents` checks `docs/agents/skills-index.md`; regenerate it with `python .\verify.py agents --write` after agent routing inputs change. `afk` validates `verify/afk-test.config.json` and AFK report templates. `check` is intended for pre-push use and includes the spec, agent, AFK, and low-cost syntax/type/test gates where local dependencies are available.
+
+For low-risk documentation, script, or narrow maintenance work, run the smallest relevant verification target first. Use `check` or `all` when the change touches shared behavior, public contracts, or release readiness.
+
+AFK testing tasks must start from `verify/afk-test.config.json` and deliver results with `verify/afk-test-report.md`.
 
 ## BDD And Domain Capture
 
@@ -68,7 +81,19 @@ Domain capture priority:
 ## Context Maintenance
 
 - Root `AGENTS.md` holds repository-wide rules only.
+- `docs/agents/` holds generated skill routing context for agents.
 - `specs/` holds BDD behavior specs, the domain glossary, and open business questions.
 - Child `AGENTS.md` files hold local constraints for important folders.
 - Keep `CODEMAP.md` current when module boundaries, data ownership, or important call paths change.
 - Keep `docs/ARCHITECTURE.md` current when deployment shape, API boundaries, or persistence responsibilities change.
+
+<!-- gitnexus:start -->
+## GitNexus
+
+Use GitNexus as a navigation aid for unfamiliar or risky code, not as ceremony for every small edit.
+
+- For non-trivial function/class/method changes, run impact analysis first and pay attention to HIGH or CRITICAL risk.
+- Before committing code changes, run `gitnexus_detect_changes()` when it helps confirm the affected scope.
+- For docs-only, config-only, generated index, or obvious low-risk maintenance, normal review plus relevant verification is enough.
+
+<!-- gitnexus:end -->

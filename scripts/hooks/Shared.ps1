@@ -18,7 +18,10 @@ function Get-CurrentBranch {
 
 function Test-ProtectedBranch([string]$Branch) {
   $protected = @("main", "master", "trunk", "dev", "develop")
-  return $protected -contains $Branch
+  if ($protected -contains $Branch) {
+    return $true
+  }
+  return $Branch -like "release/*"
 }
 
 function Test-SkipProjectHooks {

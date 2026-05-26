@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/coco830/afk-test-engineering-protocol/templates/afk-test-report.schema.json",
+  "title": "AFK Test Report",
+  "type": "object",
+  "required": [
+    "conclusion",
+    "project",
+    "riskLevel",
+    "testScope",
+    "commands",
+    "results",
+    "issuesDiscovered",
+    "issuesFixed",
+    "blockers",
+    "humanSupportRequired",
+    "todos",
+    "artifacts"
+  ],
+  "properties": {
+    "conclusion": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "BLOCKED", "PARTIAL"]
+    },
+    "project": {
+      "type": "string"
+    },
+    "riskLevel": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH"]
+    },
+    "testScope": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "result"],
+        "properties": {
+          "command": { "type": "string" },
+          "result": { "type": "string", "enum": ["PASS", "FAIL", "BLOCKED", "SKIPPED"] },
+          "exitCode": { "type": ["integer", "null"] },
+          "durationSeconds": { "type": ["number", "null"] }
+        }
+      }
+    },
+    "results": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["PASS", "FAIL", "BLOCKED", "SKIPPED", "FLAKY"]
+      }
+    },
+    "issuesDiscovered": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "issuesFixed": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fix" }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/blocker" }
+    },
+    "humanSupportRequired": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/humanSupport" }
+    },
+    "todos": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    }
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "required": ["severity", "title", "status"],
+      "properties": {
+        "severity": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+        "title": { "type": "string" },
+        "evidence": { "type": "string" },
+        "status": { "type": "string" }
+      }
+    },
+    "fix": {
+      "type": "object",
+      "required": ["issue", "fix", "verification"],
+      "properties": {
+        "issue": { "type": "string" },
+        "fix": { "type": "string" },
+        "verification": { "type": "string" }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "required": ["issue", "reason", "risk"],
+      "properties": {
+        "issue": { "type": "string" },
+        "reason": { "type": "string" },
+        "risk": { "type": "string" },
+        "currentEvidence": { "type": "string" }
+      }
+    },
+    "humanSupport": {
+      "type": "object",
+      "required": ["need", "why", "blocks"],
+      "properties": {
+        "need": { "type": "string" },
+        "why": { "type": "string" },
+        "blocks": { "type": "string" },
+        "safeWayToProvide": { "type": "string" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["type", "path"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["log", "screenshot", "trace", "video", "coverage", "junit", "html-report", "json-report", "diff", "other"]
+        },
+        "path": { "type": "string" }
+      }
+    }
+  }
+}

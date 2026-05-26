@@ -23,6 +23,7 @@ git config core.hooksPath .githooks
   - Blocks staged env files, logs, generated output, dependency folders, coverage, temp files, and local databases.
   - Scans staged text files for common secret patterns.
   - Runs `python .\verify.py spec` when staged files include `specs/**/*.feature`.
+  - Refreshes and checks `docs/agents/skills-index.md` when staged files touch agent routing inputs such as `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `.agents/`, `.claude/skills/`, `docs/agents/`, or `scripts/agent-ops/`.
   - Warns when staged implementation/tooling changes may require updates to `CODEMAP.md`, `AGENTS.md`, architecture, LSP, Git hook, database automation, or README docs.
 
 - `commit-msg`
@@ -39,16 +40,37 @@ git config core.hooksPath .githooks
 Human-approved protected branch push:
 
 ```powershell
-$env:HUMAN_APPROVED_MAIN_PUSH = "1"
+$env:GIT_WORKFLOW_MAIN_SHIP = "1"
 git push origin main
-Remove-Item Env:\HUMAN_APPROVED_MAIN_PUSH
+Remove-Item Env:\GIT_WORKFLOW_MAIN_SHIP
 ```
+
+`HUMAN_APPROVED_MAIN_PUSH=1` is still accepted for compatibility with older local shells.
 
 - `post-merge`
   - Runs only when the current branch is `main`.
-  - Deletes local and remote branches already merged into `main`.
-  - Removes clean auxiliary worktrees.
-  - Keeps unmerged branches and dirty worktrees.
+  - Deletes local branches already merged into `main`.
+  - Does not delete remote branches.
+  - Does not remove auxiliary worktrees.
+  - Keeps unmerged local branches.
+
+Manual merged remote branch cleanup:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\hooks\Cleanup-MergedBranches.ps1 -IncludeRemote
+```
+
+Manual clean auxiliary worktree cleanup:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\hooks\Cleanup-MergedBranches.ps1 -IncludeWorktrees
+```
+
+Manual combined cleanup:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\hooks\Cleanup-MergedBranches.ps1 -IncludeRemote -IncludeWorktrees
+```
 
 ## Bypass
 

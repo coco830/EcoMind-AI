@@ -13,10 +13,10 @@ Set-Location $repoRoot
 
 $branch = Get-CurrentBranch
 $isProtectedBranch = Test-ProtectedBranch $branch
-$hasHumanApproval = $env:HUMAN_APPROVED_MAIN_PUSH -eq "1" -or $env:ALLOW_PROTECTED_BRANCH_PUSH -eq "1"
+$hasHumanApproval = $env:GIT_WORKFLOW_MAIN_SHIP -eq "1" -or $env:HUMAN_APPROVED_MAIN_PUSH -eq "1" -or $env:ALLOW_PROTECTED_BRANCH_PUSH -eq "1"
 
 if ($isProtectedBranch -and -not $hasHumanApproval) {
-  Write-Error "Refusing push from protected branch '$branch'. Set HUMAN_APPROVED_MAIN_PUSH=1 after human approval; this hook will still run verification before allowing the push."
+  Write-Error "Refusing push from protected branch '$branch'. Set GIT_WORKFLOW_MAIN_SHIP=1 or HUMAN_APPROVED_MAIN_PUSH=1 only after human approval; this hook will still run verification before allowing the push."
   exit 1
 }
 

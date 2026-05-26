@@ -109,6 +109,54 @@ if ($stagedFeatureSpecs.Count -gt 0) {
   }
 }
 
+$agentOpsSensitivePatterns = @(
+  '^AGENTS\.md$',
+  '^CLAUDE\.md$',
+  '^docs/agents/',
+  '^scripts/agent-ops/',
+  '^\.agents/',
+  '^\.claude/skills/',
+  '(^|/)SKILL\.md$'
+)
+
+$agentOpsTouched = @()
+foreach ($file in $staged) {
+  $normalized = $file -replace '\\', '/'
+  foreach ($pattern in $agentOpsSensitivePatterns) {
+    if ($normalized -match $pattern) {
+      $agentOpsTouched += $file
+      break
+    }
+  }
+}
+
+if ($agentOpsTouched.Count -gt 0) {
+  Write-Host "Agent routing inputs changed; refreshing docs/agents/skills-index.md"
+  & python .\verify.py agents --write
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+
+  $skillsIndexStatus = @(git status --porcelain -- docs/agents/skills-index.md)
+  $skillsIndexNeedsStaging = $false
+  foreach ($line in $skillsIndexStatus) {
+    if ($line.StartsWith("??") -or ($line.Length -ge 2 -and $line[1] -ne " ")) {
+      $skillsIndexNeedsStaging = $true
+      break
+    }
+  }
+
+  if ($skillsIndexNeedsStaging) {
+    Write-Error "docs/agents/skills-index.md was refreshed. Review and stage it before committing."
+    exit 1
+  }
+
+  & python .\verify.py agents
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+}
+
 $docsDrift = Join-Path $PSScriptRoot "Check-DocsDrift.ps1"
 if (Test-Path -LiteralPath $docsDrift -PathType Leaf) {
   & $docsDrift -StagedFiles $staged

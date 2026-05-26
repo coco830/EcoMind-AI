@@ -120,8 +120,10 @@ EcoMind-AI/
 - `AGENTS.md`：AI/agent 开发规则与项目级护栏
 - `CODEMAP.md`：代码结构、模块边界、关键调用链
 - `docs/ARCHITECTURE.md`：架构说明与业务边界
+- `docs/agents/`：Agent skills 路由索引与操作说明
 - `docs/LSP.md`：LSP / Pyright / 前端类型检查配置
 - `docs/GIT_HOOKS.md`：项目级 Git hooks 安装与行为说明
+- `verify/afk-test.config.json`：AFK 测试任务配置入口
 - `verify.py`：统一本地验证入口
 
 ## 5. 核心业务边界
@@ -243,6 +245,11 @@ Agent / 外部系统：
 本地数据库自动化护栏：
 
 - `python .\verify.py db`
+
+Agent 与 AFK 测试协议护栏：
+
+- `python .\verify.py agents`
+- `python .\verify.py afk`
 
 GitHub Actions：
 

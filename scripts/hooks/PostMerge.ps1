@@ -17,7 +17,7 @@ if ($branch -ne "main") {
   exit 0
 }
 
-& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Cleanup-MergedBranches.ps1") -IncludeRemote -IncludeWorktrees
+& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Cleanup-MergedBranches.ps1")
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
 }

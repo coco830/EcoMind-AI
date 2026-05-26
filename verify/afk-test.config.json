@@ -1,0 +1,62 @@
+{
+  "project": {
+    "name": "EcoMind-AI",
+    "type": "fullstack-environmental-operations-platform",
+    "riskDefault": "MEDIUM"
+  },
+  "baseline": {
+    "unit": "python .\\verify.py test",
+    "integration": "python .\\verify.py check",
+    "e2e": null,
+    "verifyAll": "python .\\verify.py all"
+  },
+  "optional": {
+    "contract": null,
+    "bdd": "python .\\verify.py spec",
+    "performance": null,
+    "security": "python .\\verify.py security",
+    "accessibility": null,
+    "visual": null,
+    "chaos": null,
+    "dataQuality": null,
+    "migration": "python .\\verify.py db",
+    "smoke": null,
+    "agentOps": "python .\\verify.py agents"
+  },
+  "artifacts": {
+    "reports": "reports/",
+    "coverage": "coverage/",
+    "e2eReport": "playwright-report/",
+    "traces": "test-results/",
+    "logs": "logs/",
+    "afkReportTemplate": "verify/afk-test-report.md",
+    "afkReportSchema": "verify/afk-test-report.schema.json"
+  },
+  "environment": {
+    "requiresDocker": false,
+    "services": [],
+    "secretsRequired": []
+  },
+  "autonomy": {
+    "defaultLevel": "GREEN",
+    "reportBeforeProceeding": [
+      "newDependency",
+      "publicInterfaceChange",
+      "testStrategyChange",
+      "broadRefactor"
+    ],
+    "requiresHumanApproval": [
+      "realCredentials",
+      "productionData",
+      "destructiveOperation",
+      "permissionChange",
+      "releaseOrMainPush"
+    ],
+    "stopAfterFailedAttempts": 3
+  },
+  "blockers": {
+    "requiresHumanForRealCredentials": true,
+    "requiresHumanForProductionData": true,
+    "requiresHumanForDestructiveMigration": true
+  }
+}
