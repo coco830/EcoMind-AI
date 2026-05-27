@@ -100,8 +100,8 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, nextTick, onUnmounted } from 'vue'
 import { DataLine, Refresh, InfoFilled } from '@element-plus/icons-vue'
-import * as echarts from 'echarts'
-import { ElMessage } from 'element-plus'
+import * as echarts from '@/plugins/echarts'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { selfInspectionApi } from '@/api/selfInspection'
 
 interface Props {

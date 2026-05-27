@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { regulatorApi, type RegulatorBrief } from '@/api/regulator'
 
 const period = ref<'daily' | 'monthly'>('daily')

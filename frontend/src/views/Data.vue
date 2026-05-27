@@ -2,8 +2,8 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { dataApi, type MonitoringData } from '@/api/data'
 import { deviceApi, type Device } from '@/api/devices'
-import { ElMessage } from 'element-plus'
-import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import * as echarts from '@/plugins/echarts'
 import {
   getPollutantName,
   getPollutantUnit,

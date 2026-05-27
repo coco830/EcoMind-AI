@@ -5,7 +5,7 @@ import { dashboardApi, type DashboardStats, type TrendParams } from '@/api/dashb
 import { deviceApi, type Device } from '@/api/devices'
 import { aiApi, type PredictionResponse } from '@/api/ai'
 import type { MonitoringData } from '@/api/data'
-import * as echarts from 'echarts'
+import * as echarts from '@/plugins/echarts'
 import DeviceMap from '@/components/DeviceMap.vue'
 import AiAnalysisCard from '@/components/AiAnalysisCard.vue'
 

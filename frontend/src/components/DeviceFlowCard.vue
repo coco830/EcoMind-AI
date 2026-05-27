@@ -92,8 +92,8 @@
 import { ref, onMounted, watch, nextTick } from 'vue'
 import { Odometer, Refresh, InfoFilled } from '@element-plus/icons-vue'
 import { selfInspectionApi, type DeviceFlowListResponse, type DeviceFlowData } from '@/api/selfInspection'
-import { ElMessage } from 'element-plus'
-import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import * as echarts from '@/plugins/echarts'
 
 // Props
 interface Props {

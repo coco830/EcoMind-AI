@@ -23,6 +23,7 @@ EcoMind-AI is a multi-surface product:
 | `backend-cloudrun/alembic/` | Database migrations | Treat migrations as high-risk, irreversible-ish changes. |
 | `backend-cloudrun/tests/` | Backend regression tests | Current CI runs focused backend regression tests. |
 | `frontend/src/` | Vue console source | Main business UI and API clients. |
+| `frontend/src/plugins/` | Frontend runtime registration | Centralizes tree-shaken Element Plus component/icon registration and ECharts module registration. |
 | `ecosense-login/` | React login shell | Small Vite-based entry/login surface. |
 | `docs/` | Documentation | Architecture, hooks, LSP, integrations, product decisions. |
 | `specs/` | Feature specs | BDD `.feature` files, domain glossary, open questions, and historical planning records. |

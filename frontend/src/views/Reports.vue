@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { reportApi, type ReportPreview, type ReportDevice, type ReportRequest } from '@/api/reports'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { Document, Download, View, Calendar } from '@element-plus/icons-vue'
 
 // State

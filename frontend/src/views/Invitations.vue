@@ -4,7 +4,8 @@ import { invitationsApi, type InvitationCode, type CreateInvitationRequest } fro
 import { organizationApi, type JurisdictionOption } from '@/api/organizations'
 import { apiKeysApi, type ApiKeyAccessScope, type ApiKeyItem } from '@/api/apiKeys'
 import { useAuthStore } from '@/stores/auth'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { Plus, CopyDocument, Delete } from '@element-plus/icons-vue'
 
 const authStore = useAuthStore()

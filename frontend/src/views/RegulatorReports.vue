@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { regulatorApi } from '@/api/regulator'
 import RegulatorBrief from '@/views/RegulatorBrief.vue'
 

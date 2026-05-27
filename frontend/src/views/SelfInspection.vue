@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import type { AxiosError } from 'axios'
 import {
   Upload,
@@ -19,7 +20,7 @@ import {
   InfoFilled
 } from '@element-plus/icons-vue'
 import type { UploadFile } from 'element-plus'
-import * as echarts from 'echarts'
+import * as echarts from '@/plugins/echarts'
 import {
   selfInspectionApi,
   type SelfInspectionReport,

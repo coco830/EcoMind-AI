@@ -52,11 +52,29 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           // 分包策略
-          manualChunks: {
-            'vue-vendor': ['vue', 'vue-router', 'pinia'],
-            'element-plus': ['element-plus', '@element-plus/icons-vue'],
-            'echarts': ['echarts'],
-            'leaflet': ['leaflet', '@vue-leaflet/vue-leaflet']
+          manualChunks(id) {
+            if (id.includes('node_modules/vue') || id.includes('node_modules/vue-router') || id.includes('node_modules/pinia')) {
+              return 'vue-vendor'
+            }
+            if (id.includes('node_modules/@element-plus/icons-vue')) {
+              return 'element-plus-icons'
+            }
+            const elementPlusComponent = id.match(/node_modules[/\\]element-plus[/\\]es[/\\]components[/\\]([^/\\]+)/)
+            if (elementPlusComponent) {
+              return `element-plus-${elementPlusComponent[1]}`
+            }
+            if (id.includes('node_modules/element-plus')) {
+              return 'element-plus-core'
+            }
+            if (id.includes('node_modules/zrender')) {
+              return 'zrender'
+            }
+            if (id.includes('node_modules/echarts')) {
+              return 'echarts'
+            }
+            if (id.includes('node_modules/leaflet') || id.includes('node_modules/@vue-leaflet/vue-leaflet')) {
+              return 'leaflet'
+            }
           },
           // 静态资源文件名
           chunkFileNames: 'assets/js/[name]-[hash].js',

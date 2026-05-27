@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import * as echarts from '@/plugins/echarts'
 import {
   regulatorApi,
   type RegulatorOverview,
